@@ -1,0 +1,1 @@
+"""Service layer: Gnani, Ollama, deterministic parsers, calculations."""

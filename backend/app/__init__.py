@@ -1,0 +1,1 @@
+"""Warik AI backend application package."""
