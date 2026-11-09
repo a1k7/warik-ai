@@ -20,6 +20,8 @@ from app.services.stt_provider import (
     SUPPORTED_STT_LANGUAGES,
     get_stt_provider,
 )
+from app.models import User, Conversation, Message
+from datetime import datetime
 from app.services.tts_provider import (
     TTSNotConfiguredError,
     TTSProvider,
@@ -80,10 +82,29 @@ async def _transcribe_or_raise(
     db: Session,
     user: User,
 ) -> tuple[str, Optional[str], int, int]:
+    if not settings.voice_enabled:
+        raise HTTPException(
+            status_code=503,
+            detail="Voice is disabled. Set VOICE_ENABLED=true in backend/.env to enable.",
+        )
+
     code = _validate_language(language_code)
 
+    # STT can use Groq or Gnani. Do not require a Gnani key when Groq is the
+    # selected provider, and never report a configured service when neither is.
+    has_gnani_key = bool(settings.gnani_api_key and settings.gnani_api_key.strip())
+    has_groq_key = bool(settings.groq_api_key and settings.groq_api_key.strip())
+    if not (has_gnani_key or has_groq_key):
+        raise HTTPException(
+            status_code=503,
+            detail="Neither GROQ_API_KEY nor GNANI_API_KEY is configured. Speech-to-text service is not configured.",
+        )
+
     if audio.content_type and audio.content_type not in ALLOWED_CONTENT_TYPES:
-        raise HTTPException(status_code=400, detail=f"Unsupported audio content type: {audio.content_type}")
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported audio content type: {audio.content_type}",
+        )
 
     audio_bytes = await _read_with_limit(audio, settings.voice_max_upload_bytes)
     if not audio_bytes:
@@ -159,7 +180,55 @@ async def voice_message(
         provider=provider, db=db, user=user,
     )
     
-    agent_response = await handle_message(db, user, transcript)
+        # Reuse the user's latest active conversation.
+    conversation = (
+        db.query(Conversation)
+        .filter(
+            Conversation.user_id == user.id,
+            Conversation.is_archived.is_(False),
+        )
+        .order_by(Conversation.updated_at.desc())
+        .first()
+    )
+
+    if not conversation:
+        conversation = Conversation(
+            user_id=user.id,
+            title="New Chat",
+        )
+        db.add(conversation)
+        db.commit()
+        db.refresh(conversation)
+
+    db.add(
+        Message(
+            conversation_id=conversation.id,
+            role="user",
+            content=transcript,
+        )
+    )
+    db.commit()
+
+    agent_response = await handle_message(
+        db,
+        user,
+        transcript,
+        conversation,
+    )
+
+    db.add(
+        Message(
+            conversation_id=conversation.id,
+            role="assistant",
+            content=agent_response.reply,
+            structured_data=agent_response.structured_data,
+        )
+    )
+
+    conversation.updated_at = datetime.utcnow()
+    db.commit()
+
+    agent_response.conversation_id = conversation.id
     
     return VoiceMessageResponse(
         transcript=transcript,

@@ -1,33 +1,36 @@
 from datetime import datetime
-from typing import Literal, Optional
+from typing import Any, Optional
+from pydantic import BaseModel, ConfigDict
 
-from pydantic import BaseModel, ConfigDict, Field
+class MessageBase(BaseModel):
+    role: str
+    content: str
+    structured_data: Optional[dict] = None
 
+class MessageCreate(MessageBase):
+    pass
+
+class MessageResponse(MessageBase):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    conversation_id: int
+    created_at: datetime
 
 class ConversationCreate(BaseModel):
-    title: Optional[str] = Field(default=None, max_length=200)
+    title: Optional[str] = "New Chat"
 
+class ConversationUpdate(BaseModel):
+    title: Optional[str] = None
+    is_archived: Optional[bool] = None
 
 class ConversationResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
-
     id: int
     user_id: int
     title: str
+    is_archived: bool
     created_at: datetime
     updated_at: datetime
 
-
-class MessageCreate(BaseModel):
-    role: Literal["user", "assistant", "system"]
-    content: str = Field(min_length=1)
-
-
-class MessageResponse(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-
-    id: int
-    conversation_id: int
-    role: str
-    content: str
-    created_at: datetime
+class ConversationDetailResponse(ConversationResponse):
+    messages: list[MessageResponse] = []

@@ -46,3 +46,15 @@ htmlcov/
 
 # Audio cache (may contain user voice data)
 audio_cache/
+# Local backend working copy and backups
+/backend/backend/
+/backend/backend-backup-*/
+/backend-backup/
+/backend-backup-operator-phase1/
+/backend-backups/
+
+# Local frontend backup
+/frontend-backup/
+
+# Local exported backend archives
+/warik-ai-backend*.zip

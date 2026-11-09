@@ -1,19 +1,15 @@
 from typing import Any, Optional
-
 from pydantic import BaseModel, Field
-
 
 class AgentMessageRequest(BaseModel):
     text: str = Field(min_length=1, max_length=4000)
-    conversation_id: Optional[int] = None
-
+    document_id: Optional[int] = None  # <-- MUST BE HERE
 
 class ToolCallInfo(BaseModel):
     tool_name: str
     args: dict[str, Any]
     success: bool
     message: str
-
 
 class AgentMessageResponse(BaseModel):
     reply: str
@@ -23,7 +19,7 @@ class AgentMessageResponse(BaseModel):
     pending_tool: Optional[str] = None
     pending_args: Optional[dict[str, Any]] = None
     conversation_id: Optional[int] = None
-
+    structured_data: Optional[dict[str, Any]] = None
 
 class AgentConfirmRequest(BaseModel):
     confirmation_token: str = Field(min_length=10)

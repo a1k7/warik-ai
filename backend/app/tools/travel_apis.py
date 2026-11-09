@@ -1,38 +1,69 @@
+"""Warik AI travel tools — flights, hotels, places, cabs."""
 import httpx
 import json
 import subprocess
 import re
-from urllib.parse import quote
-from typing import Optional, List, Dict, Any
+import math
+from urllib.parse import quote_plus, quote
+from typing import Optional
+from datetime import datetime
 from pydantic import BaseModel, Field
 from app.tools.base import BaseTool, ToolContext, ToolResult
 from app.core.config import settings
-from app.tools.travel_models import FlightResult, HotelResult, PlaceResult, CabResult
 
-# Helper: Convert City Names to IATA Codes
 CITY_TO_IATA = {
-    "MUMBAI": "BOM", "DELHI": "DEL", "NEW DELHI": "DEL", "BENGALURU": "BLR",
-    "BANGALORE": "BLR", "CHENNAI": "MAA", "KOLKATA": "CCU", "HYDERABAD": "HYD",
-    "PUNE": "PNQ", "AHMEDABAD": "AMD", "GOA": "GOI", "JAIPUR": "JAI",
-    "LUCKNOW": "LKO", "BHOPAL": "BHO", "INDORE": "IDR", "PATNA": "PAT",
-    "COCHIN": "COK", "KOCHI": "COK", "TRIVANDRUM": "TRV", "GUWAHATI": "GAU",
+    "MUMBAI": "BOM", "BOMBAY": "BOM", "NEW DELHI": "DEL", "DELHI": "DEL",
+    "BANGALORE": "BLR", "BENGALURU": "BLR", "JAIPUR": "JAI", "KOLKATA": "CCU",
+    "CHENNAI": "MAA", "GOA": "GOI", "PANAJI": "GOI", "HYDERABAD": "HYD",
+    "PUNE": "PNQ", "AHMEDABAD": "AMD", "KOCHI": "COK", "LUCKNOW": "LKO",
+    "CHANDIGARH": "IXC", "AGRA": "AGR", "VARANASI": "VNS", "AMRITSAR": "ATQ",
 }
 
-def get_iata(city: str) -> str:
-    city_upper = city.upper().strip()
-    return CITY_TO_IATA.get(city_upper, city_upper)
+STATE_TO_CLI_CITY = {
+    "goa": "Panaji", "kerala": "Kochi", "rajasthan": "Jaipur",
+    "west bengal": "Kolkata", "maharashtra": "Mumbai", "punjab": "Amritsar",
+    "tamil nadu": "Chennai", "karnataka": "Bangalore",
+    "uttar pradesh": "Lucknow", "himachal pradesh": "Shimla", "delhi": "New Delhi",
+}
 
-# ==========================================
-# 1. FLIGHTS - REAL GOOGLE FLIGHTS DATA (via trvl)
-# ==========================================
+
+def get_iata(city: str) -> str:
+    if not isinstance(city, str):
+        return ""
+    normalized = city.upper().strip()
+    return CITY_TO_IATA.get(normalized, normalized)
+
+
+def normalize_cli_city(city: str) -> str:
+    return STATE_TO_CLI_CITY.get(city.lower().strip(), city)
+
+
+def format_price(amount: float, currency: str) -> str:
+    curr = currency.upper().strip()
+    if curr == "INR": return f"₹{amount:,.0f}"
+    elif curr == "USD": return f"${amount:,.2f}"
+    elif curr == "EUR": return f"€{amount:,.2f}"
+    return f"{amount:,.2f} {curr}"
+
+
+def haversine_km(lat1, lon1, lat2, lon2):
+    R = 6371.0
+    lat1, lon1, lat2, lon2 = map(math.radians, [lat1, lon1, lat2, lon2])
+    a = math.sin((lat2-lat1)/2)**2 + math.cos(lat1)*math.cos(lat2)*math.sin((lon2-lon1)/2)**2
+    return R * 2 * math.asin(math.sqrt(a))
+
+
+# ─── FLIGHTS ───────────────────────────────────────────────
+
 class FlightInput(BaseModel):
-    origin: str = Field(..., description="Origin city or IATA code")
-    destination: str = Field(..., description="Destination city or IATA code")
-    date: str = Field(..., description="YYYY-MM-DD")
+    origin: str = Field(...)
+    destination: str = Field(...)
+    date: str = Field(...)
+
 
 class RealFlightSearchTool(BaseTool):
     name = "search_flights_real"
-    description = "Find real-time flights from Google Flights with accurate airline names and schedules."
+    description = "Search real-time flight options and return provider/Google Flights booking links. Does not reserve a seat, issue a ticket, or process payment."
     input_schema = FlightInput
     requires_confirmation = False
 
@@ -40,288 +71,320 @@ class RealFlightSearchTool(BaseTool):
         origin_iata = get_iata(params.origin)
         dest_iata = get_iata(params.destination)
 
+        # Never invoke the provider with unresolved LLM placeholders or
+        # malformed airport/date values.
+        if not re.fullmatch(r"[A-Z]{3}", origin_iata):
+            return ToolResult(
+                success=False,
+                message="Flight search skipped: a valid departure airport is required.",
+            )
+
+        if not re.fullmatch(r"[A-Z]{3}", dest_iata):
+            return ToolResult(
+                success=False,
+                message="Flight search skipped: a valid destination airport is required.",
+            )
+
+        try:
+            parsed_date = datetime.strptime(params.date, "%Y-%m-%d")
+            if parsed_date.strftime("%Y-%m-%d") != params.date:
+                raise ValueError("Date must use YYYY-MM-DD format.")
+        except (TypeError, ValueError):
+            return ToolResult(
+                success=False,
+                message="Flight search skipped: a valid date in YYYY-MM-DD format is required.",
+            )
+
         try:
             result = subprocess.run(
                 ["trvl", "flights", origin_iata, dest_iata, params.date, "--format", "json"],
-                capture_output=True, text=True, check=True, timeout=20.0
+                capture_output=True, text=True, check=True, timeout=30.0,
             )
             data = json.loads(result.stdout)
-            
-            if isinstance(data, list):
-                flights = data
-            else:
-                flights = data.get("flights") or data.get("results") or data.get("itineraries") or []
-            
-            if not flights:
-                return ToolResult(success=True, message=f"No flights found from {origin_iata} to {dest_iata} on {params.date}.")
+            flights = data if isinstance(data, list) else (data.get("flights") or data.get("results") or [])
 
-            message = f"✈️ **Real Flights from {origin_iata} to {dest_iata}** ({params.date}):\n\n"
-            results = []
-
-            for f in flights[:5]:
+            valid = []
+            for f in flights:
                 legs = f.get("legs", [])
-                if not legs: continue
-                
-                first_leg = legs[0]
-                last_leg = legs[-1]
-                
-                airline = first_leg.get("airline", "Unknown Airline")
-                flight_num = first_leg.get("flight_number", "")
-                dep_time = first_leg.get("departure_time", "").replace("T", " ")[5:16]
-                arr_time = last_leg.get("arrival_time", "").replace("T", " ")[5:16]
-                
-                price = f.get("price", 0)
-                currency = f.get("currency", "INR")
-                price_str = f"₹{price:,.2f}" if price else "Check link"
+                if not legs:
+                    continue
+                if (legs[0].get("departure_airport", {}).get("code", "") == origin_iata
+                        and legs[-1].get("arrival_airport", {}).get("code", "") == dest_iata):
+                    valid.append(f)
+
+            if not valid:
+                return ToolResult(success=True,
+                                  message=f"No flights found from {origin_iata} to {dest_iata}.")
+
+            structured = []
+            for f in valid[:3]:
+                legs = f.get("legs", [])
+                raw_price = float(f.get("price", 0))
+                raw_cur = f.get("currency", "EUR").upper()
+                rate = 90.0 if raw_cur == "EUR" else 83.0 if raw_cur == "USD" else 1.0
+                price_inr = raw_price * rate
+
+                segments = [{
+                    "airline": leg.get("airline", "Unknown"),
+                    "flight_number": leg.get("flight_number", "N/A"),
+                    "origin": leg.get("departure_airport", {}).get("code", ""),
+                    "destination": leg.get("arrival_airport", {}).get("code", ""),
+                    "departure": leg.get("departure_time", "").replace("T", " ")[:16],
+                    "arrival": leg.get("arrival_time", "").replace("T", " ")[:16],
+                } for leg in legs]
+
                 booking_url = f.get("booking_url", "")
-                stops = f.get("stops", 0)
-                stops_str = "Non-stop" if stops == 0 else f"{stops} stop(s)"
+                if not booking_url:
+                    booking_url = (
+                        f"https://www.google.com/travel/flights?"
+                        f"q=Flights%20from%20{origin_iata}%20to%20{dest_iata}%20on%20{params.date}"
+                    )
 
-                results.append(FlightResult(
-                    airline=airline, flight_number=flight_num,
-                    departure_time=dep_time, arrival_time=arr_time,
-                    price=price_str, currency=currency, booking_url=booking_url
-                ))
+                structured.append({
+                    "price": format_price(price_inr, "INR"),
+                    "segments": segments,
+                    "stops": len(segments) - 1,
+                    "url": booking_url,
+                })
 
-                message += f"🛫 **{airline}** ({flight_num}) — {stops_str}\n"
-                message += f"   Depart: {dep_time} | Arrive: {arr_time}\n"
-                message += f"   Price: **{price_str}** | [Book Now]({booking_url})\n\n"
-
-            return ToolResult(success=True, message=message, data={"flights": [r.model_dump() for r in results]})
-        except subprocess.TimeoutExpired:
-            return ToolResult(success=False, message="Flight search timed out. Please try again.")
-        except subprocess.CalledProcessError as e:
-            return ToolResult(success=False, message=f"trvl command failed: {e.stderr}")
+            return ToolResult(
+                success=True,
+                message=f"Found {len(structured)} flight option(s).",
+                data={"type": "flight_list", "items": structured},
+            )
         except Exception as e:
-            return ToolResult(success=False, message=f"Flight search error: {str(e)}")
+            return ToolResult(success=False, message=f"Flight search unavailable: {e}")
 
 
-# ==========================================
-# 2. HOTELS - STAYAPI
-# ==========================================
+# ─── HOTELS ────────────────────────────────────────────────
+
 class HotelInput(BaseModel):
-    city: str = Field(..., description="City name")
-    check_in: str = Field(..., description="YYYY-MM-DD")
-    check_out: str = Field(..., description="YYYY-MM-DD")
+    city: str = Field(...)
+    check_in: str = Field(...)
+    check_out: str = Field(...)
+    travellers: int = Field(default=2)
+    budget: Optional[float] = Field(default=None)
+
 
 class StayApiHotelTool(BaseTool):
     name = "search_hotels_stayapi"
-    description = "Find real-time hotel prices with images and booking links."
+    description = "Search hotels and return external Booking.com links. Does not create a reservation or process payment. Budget is MAXIMUM TOTAL price for the entire stay."
     input_schema = HotelInput
     requires_confirmation = False
 
     def execute(self, ctx: ToolContext, params: HotelInput) -> ToolResult:
-        if not settings.stayapi_key:
-            return ToolResult(success=False, message="STAYAPI_KEY is missing in .env")
-        if params.check_out <= params.check_in:
-            return ToolResult(success=False, message="Check-out date must be after check-in date.")
+        # Validate stay dates before making any external provider call.
+        try:
+            check_in = datetime.strptime(params.check_in, "%Y-%m-%d").date()
+            check_out = datetime.strptime(params.check_out, "%Y-%m-%d").date()
 
-        headers = {"Authorization": f"Bearer {settings.stayapi_key}"}
-        params_dict = {"destination": params.city, "check_in": params.check_in, "check_out": params.check_out, "adults": 2}
+            if check_in.isoformat() != params.check_in:
+                raise ValueError("Check-in must use YYYY-MM-DD format.")
+            if check_out.isoformat() != params.check_out:
+                raise ValueError("Check-out must use YYYY-MM-DD format.")
+            if check_out <= check_in:
+                raise ValueError("Check-out must be after check-in.")
+        except (TypeError, ValueError) as exc:
+            return ToolResult(
+                success=False,
+                message=f"Hotel search skipped: invalid stay dates. {exc}",
+            )
+
+        cli_city = normalize_cli_city(params.city)
+        try:
+            result = subprocess.run(
+                ["trvl", "hotels", cli_city, "--checkin", params.check_in,
+                 "--checkout", params.check_out, "--format", "json"],
+                capture_output=True, text=True, check=True, timeout=90.0,
+            )
+        except Exception as e:
+            return ToolResult(success=False,
+                              message=f"Hotel provider error for {params.city}: {e}")
 
         try:
-            with httpx.Client(timeout=15.0) as client:
-                response = client.get("https://api.stayapi.com/v1/booking/search", headers=headers, params=params_dict)
-                response.raise_for_status()
-                data = response.json()
+            data = json.loads(result.stdout)
+            hotels = data if isinstance(data, list) else (data.get("hotels") or data.get("results") or [])
+        except json.JSONDecodeError:
+            return ToolResult(success=False, message="Hotel provider returned unreadable data.")
 
-            hotels = data.get("hotels", []) or data.get("results", [])
-            if not hotels:
-                return ToolResult(success=True, message=f"No hotels found in {params.city} for those dates.")
+        if not hotels:
+            return ToolResult(success=True,
+                              message=f"No hotels found in {params.city} for those dates.",
+                              data={"type": "hotel_list", "items": []})
 
-            message = f"🏨 **Hotels in {params.city}** ({params.check_in} to {params.check_out}):\n\n"
-            results = []
+        try:
+            d1 = datetime.strptime(params.check_in, "%Y-%m-%d")
+            d2 = datetime.strptime(params.check_out, "%Y-%m-%d")
+            nights = max(1, (d2 - d1).days)
+        except Exception:
+            nights = 1
 
-            for h in hotels[:5]:
-                name = h.get("name", "Unknown Hotel")
-                price = h.get("price", "N/A")
-                currency = h.get("currency", "INR")
-                rating = h.get("rating", "N/A")
-                image = h.get("image_url", "")
-                booking_url = h.get("booking_url", "")
-                map_url = f"https://www.google.com/maps/search/?api=1&query={quote(name + ' ' + params.city)}"
+        candidates = []
+        excluded = 0
 
-                results.append(HotelResult(
-                    name=name, price_per_night=f"{price} {currency}", rating=str(rating),
-                    image_url=image, booking_url=booking_url, map_url=map_url
-                ))
+        for h in hotels:
+            name = (h.get("name") or "").strip()
+            if not name:
+                continue
+            raw_price = float(h.get("price", 0))
+            raw_cur = h.get("currency", "EUR").upper()
+            if raw_price <= 0:
+                continue
 
-                message += f"🏨 **{name}** (Rating: {rating}⭐)\n"
-                message += f"   Price: **{price} {currency}** / night\n"
-                if image:
-                    message += f"   [View Image]({image})\n"
-                message += f"   [Book Now]({booking_url}) | [View on Map]({map_url})\n\n"
+            rate = 90.0 if raw_cur == "EUR" else 83.0 if raw_cur == "USD" else 1.0
+            per_night_inr = raw_price * rate
+            total_inr = per_night_inr * nights
 
-            return ToolResult(success=True, message=message, data={"hotels": [r.model_dump() for r in results]})
-        except Exception as e:
-            return ToolResult(success=False, message=f"StayAPI hotel search error: {str(e)}")
+            if params.budget and total_inr > params.budget:
+                excluded += 1
+                continue
 
-# ==========================================
-# 3. GEOAPIFY - PLACES (Validated & Ranked)
-# ==========================================
+            slug = re.sub(r'[^a-zA-Z0-9\s-]', '', name).strip().lower().replace(' ', '-')
+            booking_url = (
+                f"https://www.booking.com/searchresults.html"
+                f"?ss={slug}+{quote_plus(params.city)}"
+                f"&checkin={params.check_in}&checkout={params.check_out}"
+                f"&group_adults={params.travellers}&no_rooms=1"
+            )
+
+            candidates.append({
+                "name": name,
+                "address": h.get("address", ""),
+                "price_per_night": format_price(per_night_inr, "INR"),
+                "total_stay": format_price(total_inr, "INR"),
+                "nights": nights,
+                "total_inr": total_inr,
+                "booking_url": booking_url,
+                "image_url": (
+                    h.get("image_url")
+                    or h.get("photo_url")
+                    or h.get("thumbnail")
+                    or (
+                        h.get("image", {}).get("url")
+                        if isinstance(h.get("image"), dict)
+                        else h.get("image")
+                    )
+                    or ""
+                ),
+                "rating": h.get("rating") or h.get("review_score") or "",
+            })
+
+        if not candidates:
+            msg = f"I couldn't find any hotels in {params.city} for those dates"
+            if excluded > 0:
+                msg += f" within ₹{params.budget:,.0f} total for {nights} nights (all {excluded} exceeded budget)."
+            else:
+                msg += " with verified pricing."
+            return ToolResult(success=True, message=msg, data={"type": "hotel_list", "items": []})
+
+        candidates.sort(key=lambda x: x["total_inr"])
+        top = candidates[:3]
+
+        msg = f"Found {len(top)} hotels in {params.city} for {nights} nights"
+        if params.budget:
+            msg += f" within your ₹{params.budget:,.0f} budget"
+        msg += "."
+
+        return ToolResult(success=True, message=msg,
+                          data={"type": "hotel_list", "items": top})
+
+
+# ─── GEOAPIFY PLACES (RESTORED) ────────────────────────────
+
 class PlacesInput(BaseModel):
-    location: Optional[str] = Field(default=None, description="City or area, e.g., 'Mumbai' or 'Bhopal'")
-    category: str = Field(default="restaurant", description="restaurant, cafe, hotel, or tourist_spot")
-    query: Optional[str] = Field(default=None, description="Fallback if location is missing")
+    location: Optional[str] = Field(default=None)
+    category: str = Field(default="restaurant")
+    query: Optional[str] = Field(default=None)
+
 
 class GeoapifyPlacesTool(BaseTool):
     name = "search_places_geoapify"
-    description = "Find real places, restaurants, and tourist spots in India using Geoapify."
+    description = "Find real places and restaurants via Geoapify."
     input_schema = PlacesInput
     requires_confirmation = False
 
     def execute(self, ctx: ToolContext, params: PlacesInput) -> ToolResult:
         if not settings.geoapify_api_key:
-            return ToolResult(success=False, message="GEOAPIFY_API_KEY is missing in .env")
+            return ToolResult(success=False, message="Missing API Key")
 
-        # Fallback: If the LLM forgot to extract 'location', try to guess it from 'query'
-        final_location = params.location
-        if not final_location and params.query:
-            clean_query = re.sub(r'(?i)(find|best|good|some|restaurants?|cafes?|hotels?|in|near)', '', params.query).strip()
-            final_location = clean_query if clean_query else params.query
-
+        final_location = params.location or params.query
         if not final_location:
-            return ToolResult(success=False, message="Please specify a city or location.")
-
-        cat_map = {
-            "restaurant": "catering.restaurant",
-            "cafe": "catering.cafe",
-            "hotel": "accommodation.hotel",
-            "tourist_spot": "tourism.sights",
-            "attraction": "tourism.attraction"
-        }
-        geo_cat = cat_map.get(params.category.lower().strip(), "catering.restaurant")
+            return ToolResult(success=False, message="Specify a location.")
 
         try:
-            # 1. Geocode location
-            geo_url = f"https://api.geoapify.com/v1/geocode/search?text={quote(final_location)}&limit=1&apiKey={settings.geoapify_api_key}"
+            geo_url = (
+                f"https://api.geoapify.com/v1/geocode/search?"
+                f"text={quote(final_location)}&limit=1&apiKey={settings.geoapify_api_key}"
+            )
             with httpx.Client(timeout=10.0) as client:
                 geo_res = client.get(geo_url).json()
                 if not geo_res.get("features"):
-                    return ToolResult(success=False, message=f"Could not find the location '{final_location}'.")
-                
+                    return ToolResult(success=False, message=f"Location '{final_location}' not found.")
+
                 feature = geo_res["features"][0]
                 lat = feature["properties"]["lat"]
                 lon = feature["properties"]["lon"]
                 city_name = feature["properties"].get("city", final_location)
 
-                # 2. Places search (strict radius = 10km to prevent New Panvel showing up for Mumbai)
+                cat = "catering.cafe" if "cafe" in params.category.lower() else "catering.restaurant"
                 places_url = (
-                    f"https://api.geoapify.com/v2/places?categories={geo_cat}"
-                    f"&filter=circle:{lon},{lat},10000" 
-                    f"&limit=20&apiKey={settings.geoapify_api_key}"
+                    f"https://api.geoapify.com/v2/places?"
+                    f"categories={cat}&filter=circle:{lon},{lat},10000&limit=10"
+                    f"&apiKey={settings.geoapify_api_key}"
                 )
                 places_res = client.get(places_url).json()
 
-            raw_features = places_res.get("features", [])
-            
-            # 3. Validation & Deduplication Layer
-            seen_ids = set()
-            valid_places = []
-            invalid_names = {"unknown place", "null", "undefined", "n/a", ""}
+            valid_places = [
+                {
+                    "name": p["properties"].get("name", "Unknown"),
+                    "address": p["properties"].get("address_line2", ""),
+                    "map_url": "https://maps.google.com/?q=" + quote(p["properties"].get("name", "")),
+                }
+                for p in places_res.get("features", [])
+                if p["properties"].get("name")
+            ]
 
-            for p in raw_features:
-                props = p.get("properties", {})
-                name = props.get("name", "").strip()
-                place_id = props.get("place_id")
-                address = props.get("address_line2", "")
-                
-                # Reject bad data
-                if not name or name.lower() in invalid_names:
-                    continue
-                if not place_id or place_id in seen_ids:
-                    continue
-                if not address:
-                    continue
-                if not props.get("lat") or not props.get("lon"):
-                    continue
-
-                seen_ids.add(place_id)
-                
-                # Check if category matches exactly
-                categories = props.get("categories", [])
-                if not any(geo_cat in c for c in categories):
-                    continue
-                    
-                valid_places.append({
-                    "name": name,
-                    "address": address,
-                    "place_id": place_id,
-                    "categories": categories
-                })
-
-            # 4. Ranking Layer (Keyword + Completeness)
-            query_lower = (params.query or "").lower()
-            
-            def score_place(place):
-                score = 0
-                name_lower = place["name"].lower()
-                # Boost if the query keyword is in the name
-                if "veg" in query_lower and "veg" in name_lower: score += 10
-                if "cafe" in query_lower and "cafe" in name_lower: score += 10
-                if "bar" in query_lower and "bar" in name_lower: score += 10
-                # Boost if address contains the city name (data completeness)
-                if city_name.lower() in place["address"].lower(): score += 5
-                return score
-
-            valid_places.sort(key=score_place, reverse=True)
-
-            # 5. Handle Empty or Fewer Results
             if not valid_places:
-                return ToolResult(
-                    success=True, 
-                    message=f"I searched for {params.category}s near {city_name}, but couldn't find any verified matches. You might want to try expanding the search area."
-                )
-            
-            # 6. Format Premium Output
-            if len(valid_places) < 3:
-                message = f"I only found {len(valid_places)} verified {params.category} near {city_name}, so I've listed them below:\n\n"
-            else:
-                message = f"📍 **Top Verified {params.category.capitalize()}s in {city_name}:**\n\n"
+                return ToolResult(success=True, message="No places found.")
 
-            results = []
-            for p in valid_places[:5]:
-                name = p["name"]
-                address = p["address"]
-                map_url = f"https://www.google.com/maps/search/?api=1&query={quote(name + ' ' + address)}"
-                
-                results.append(PlaceResult(name=name, address=address, map_url=map_url))
-                
-                message += f"**{name}**\n"
-                message += f"📍 {address}\n"
-                message += f"🔗 [View on Google Maps]({map_url})\n\n"
-
-            message += "*Note: These results are ranked by location and data accuracy. Live ratings and review counts are not available via this mapping provider.*"
-
-            return ToolResult(success=True, message=message, data={"places": [r.model_dump() for r in results]})
-            
+            return ToolResult(
+                success=True,
+                message=f"Top places in {city_name}.",
+                data={"type": "place_list", "items": valid_places[:5], "city": city_name},
+            )
         except Exception as e:
-            return ToolResult(success=False, message=f"Geoapify error: {str(e)}")
+            return ToolResult(success=False, message=f"Search error: {e}")
 
 
-# ==========================================
-# 4. CABS (Deep Links)
-# ==========================================
+# ─── CAB ───────────────────────────────────────────────────
+
 class CabInput(BaseModel):
-    pickup_location: str = Field(..., description="E.g., 'Bhopal Railway Station'")
-    dropoff_location: str = Field(..., description="E.g., 'DB City Mall'")
+    pickup_location: str = Field(default="Current Location")
+    dropoff_location: str = Field(default="City Center")
+
 
 class CabDeepLinkTool(BaseTool):
     name = "get_cab_links"
-    description = "Generate a direct deep-link to book an Uber or Ola cab."
+    description = "Generate Uber/Ola ride handoff links for the user to review and book in the provider app. Does not request a ride or process payment."
     input_schema = CabInput
     requires_confirmation = False
 
     def execute(self, ctx: ToolContext, params: CabInput) -> ToolResult:
-        try:
-            uber_link = f"https://m.uber.com/ul/?action=setPickup&pickup=my_location&dropoff[formatted_address]={quote(params.dropoff_location)}"
-            ola_link = f"https://book.olacabs.com/?pickup_name={quote(params.pickup_location)}&drop_name={quote(params.dropoff_location)}"
-
-            message = f"🚕 **Book a ride from {params.pickup_location} to {params.dropoff_location}:**\n\n"
-            message += f"🟢 [Open in Uber]({uber_link})\n"
-            message += f"🟡 [Open in Ola]({ola_link})\n\n"
-            message += "*Note: Prices will be calculated live inside the app based on your current location.*"
-
-            return ToolResult(success=True, message=message, data={"uber_link": uber_link, "ola_link": ola_link})
-        except Exception as e:
-            return ToolResult(success=False, message=f"Cab error: {str(e)}")
+        uber = (
+            "https://m.uber.com/ul/?action=setPickup&pickup=my_location"
+            "&dropoff[formatted_address]=" + quote(params.dropoff_location)
+        )
+        ola = (
+            "https://book.olacabs.com/?pickup_name={}&drop_name={}"
+            .format(quote(params.pickup_location), quote(params.dropoff_location))
+        )
+        return ToolResult(
+            success=True,
+            message=f"Book a ride from {params.pickup_location} to {params.dropoff_location}.",
+            data={
+                "type": "transport_links",
+                "origin": params.pickup_location,
+                "destination": params.dropoff_location,
+                "links": {"uber": uber, "ola": ola},
+            },
+        )
