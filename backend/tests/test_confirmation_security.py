@@ -77,3 +77,28 @@ def test_expired_confirmation_cannot_execute(db_session):
     assert exc.value.status_code == 409
     assert confirmation.status == "EXPIRED"
     assert db_session.query(Expense).filter_by(user_id=user.id).count() == 0
+
+
+def test_confirmation_token_cannot_be_used_by_another_user(db_session):
+    owner = create_user(db_session, "owner@example.com")
+    attacker = create_user(db_session, "attacker@example.com")
+
+    pending = asyncio.run(
+        handle_message(db_session, owner, "I spent ₹350 on dinner")
+    )
+
+    assert pending.needs_confirmation
+    assert db_session.query(Expense).filter_by(user_id=owner.id).count() == 0
+
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(
+            handle_confirm(
+                db_session,
+                attacker,
+                pending.confirmation_token,
+            )
+        )
+
+    assert exc.value.status_code == 403
+    assert db_session.query(Expense).filter_by(user_id=owner.id).count() == 0
+    assert db_session.query(Expense).filter_by(user_id=attacker.id).count() == 0

@@ -107,3 +107,51 @@ def test_zero_retries_disallows_retry():
     ]
     result = engine.retry_step(workflow, "no-retry")
     assert result == {"ok": False, "reason": "Max retries exceeded"}
+
+
+def test_rejected_step_cannot_be_retried(engine_and_workflow):
+    engine, workflow, _ = engine_and_workflow
+
+    assert engine.reject_step(workflow, "sensitive", "Not authorized")
+
+    result = engine.retry_step(workflow, "sensitive")
+
+    assert result["ok"] is False
+    assert "not FAILED" in result["reason"]
+    assert workflow.steps_json[0]["status"] == "REJECTED"
+
+
+def test_required_rejection_produces_rejected_workflow(engine_and_workflow):
+    engine, _, _ = engine_and_workflow
+
+    steps = [
+        {
+            "id": "required",
+            "status": "REJECTED",
+            "required": True,
+        }
+    ]
+
+    assert engine._compute_overall_status(steps, None) == "REJECTED"
+
+
+def test_optional_rejection_allows_partial_completion(engine_and_workflow):
+    engine, _, _ = engine_and_workflow
+
+    steps = [
+        {
+            "id": "required",
+            "status": "COMPLETED",
+            "required": True,
+        },
+        {
+            "id": "optional",
+            "status": "REJECTED",
+            "required": False,
+        },
+    ]
+
+    assert (
+        engine._compute_overall_status(steps, None)
+        == "PARTIALLY_COMPLETED"
+    )
