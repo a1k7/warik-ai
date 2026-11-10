@@ -58,3 +58,7 @@ audio_cache/
 
 # Local exported backend archives
 /warik-ai-backend*.zip
+
+# Local credentials
+/token.json
+backend/token.json

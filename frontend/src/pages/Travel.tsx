@@ -1,32 +1,13 @@
-import React, { useEffect, useState } from 'react';
-import { travelService } from '../services/api';
-import type { TravelPlan } from '../types';
-import { MapPin } from 'lucide-react';
-
-export const Travel: React.FC = () => {
-  const [plans, setPlans] = useState<TravelPlan[]>([]);
-
-  useEffect(() => {
-    travelService.list().then(setPlans);
-  }, []);
-
-  return (
-    <div className="space-y-6">
-      <h1 className="text-2xl font-bold text-charcoal">Travel Plans</h1>
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        {plans.length === 0 ? <p className="text-gray-500">No travel plans yet. Ask Warik to plan a trip!</p> : (
-          plans.map(plan => (
-            <div key={plan.id} className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
-              <div className="flex items-center gap-2 mb-2 text-burgundy">
-                <MapPin size={18} />
-                <h3 className="font-bold">{plan.title}</h3>
-              </div>
-              <p className="text-sm text-gray-500 mb-4">{plan.origin} → {plan.destination}</p>
-              {plan.budget && <p className="text-sm font-medium bg-ivory inline-block px-2 py-1 rounded">Budget: ₹{plan.budget}</p>}
-            </div>
-          ))
-        )}
-      </div>
-    </div>
-  );
-};
+import {useEffect,useState} from 'react';
+import {MapPin,Trash2,RefreshCw,Plus,Plane} from 'lucide-react';
+import {travelApi,TravelPlan} from '../api';
+export function Travel(){
+ const [items,setItems]=useState<TravelPlan[]>([]);const [title,setTitle]=useState('');const [origin,setOrigin]=useState('');const [destination,setDestination]=useState('');const [start,setStart]=useState('');const [end,setEnd]=useState('');const [travellers,setTravellers]=useState('1');const [budget,setBudget]=useState('');const [notes,setNotes]=useState('');const [stops,setStops]=useState<string[]>([]);const [stopDraft,setStopDraft]=useState('');const [error,setError]=useState('');const [busy,setBusy]=useState(false);
+ const load=async()=>{setBusy(true);setError('');try{setItems(await travelApi.list());}catch{setError('Could not load travel plans. Check your backend connection.');}finally{setBusy(false);}};useEffect(()=>{void load();},[]);
+ const add=async(e:React.FormEvent)=>{e.preventDefault();if(!title.trim()||!origin.trim()||!destination.trim())return;const payload={title,origin,destination,start_date:start||null,end_date:end||null,travellers:Number(travellers),budget:budget?Number(budget):null,currency:'INR',notes:notes||null,stops:stops.map(name=>({name}))};try{await travelApi.create(payload);setTitle('');setOrigin('');setDestination('');setStart('');setEnd('');setTravellers('1');setBudget('');setNotes('');setStops([]);await load();}catch{setError('Travel plan could not be saved. Check the required fields.');}};
+ const remove=async(id:number)=>{if(!window.confirm('Delete this travel plan?'))return;try{await travelApi.remove(id);await load();}catch{setError('Could not delete this plan.');}};
+ return <section className="feature-page"><div className="feature-heading"><div><span className="eyebrow">TRIPS & ITINERARIES</span><h1>Travel</h1><p>Keep your trip details and planned stops together.</p></div><button className="icon-refresh" onClick={()=>void load()} aria-label="Refresh"><RefreshCw size={17}/></button></div>
+ <div className="metric-row"><div className="metric-card"><span>Saved plans</span><strong>{items.length}</strong></div><div className="metric-card"><span>Upcoming</span><strong>{items.filter(x=>x.start_date&&new Date(x.start_date)>=new Date(new Date().toDateString())).length}</strong></div><div className="metric-card"><span>Planned stops</span><strong>{items.reduce((n,x)=>n+(x.stops?.length||0),0)}</strong></div></div>
+ <form className="feature-form" onSubmit={add}><h2><Plus size={18}/> Create a travel plan</h2><div className="form-grid"><label className="wide">Plan name<input required maxLength={200} value={title} onChange={e=>setTitle(e.target.value)} placeholder="Jaipur weekend getaway"/></label><label>From<input required maxLength={120} value={origin} onChange={e=>setOrigin(e.target.value)} placeholder="Bhopal"/></label><label>Destination<input required maxLength={120} value={destination} onChange={e=>setDestination(e.target.value)} placeholder="Jaipur"/></label><label>Start date<input type="date" value={start} onChange={e=>setStart(e.target.value)}/></label><label>End date<input type="date" min={start||undefined} value={end} onChange={e=>setEnd(e.target.value)}/></label><label>Travellers<input type="number" min="1" max="50" value={travellers} onChange={e=>setTravellers(e.target.value)}/></label><label>Budget (INR)<input type="number" min="0" step="0.01" value={budget} onChange={e=>setBudget(e.target.value)} placeholder="Optional"/></label><label className="wide">Notes<input maxLength={4000} value={notes} onChange={e=>setNotes(e.target.value)} placeholder="Trip preferences or details"/></label></div><div className="stop-editor"><label>Planned stops</label><div className="stop-add"><input value={stopDraft} onChange={e=>setStopDraft(e.target.value)} placeholder="Add a place or activity"/><button type="button" onClick={()=>{if(stopDraft.trim()){setStops([...stops,stopDraft.trim()]);setStopDraft('');}}}><Plus size={16}/> Add stop</button></div>{stops.map((s,i)=><span className="stop-chip" key={`${s}-${i}`}>{s}<button type="button" onClick={()=>setStops(stops.filter((_,j)=>j!==i))}>×</button></span>)}</div><button className="primary-action" disabled={busy||!title.trim()||!origin.trim()||!destination.trim()}>Save travel plan</button></form>
+ <div className="list-toolbar"><h2>Your trips</h2></div>{error&&<p className="inline-error">{error}</p>}{items.length===0?<p className="empty-state">{busy?'Loading travel plans…':'No travel plans saved yet.'}</p>:<div className="record-list">{items.map(t=><article className="record-card travel-record" key={t.id}><div className="record-icon"><Plane size={17}/></div><div className="record-main"><strong>{t.title}</strong><p className="route-line"><MapPin size={13}/>{t.origin} <span>→</span> {t.destination}</p><div className="record-meta">{t.start_date&&<span>{t.start_date}{t.end_date?` – ${t.end_date}`:''}</span>}<span>{t.travellers} traveller{t.travellers===1?'':'s'}</span>{t.budget!=null&&<span>{t.currency} {Number(t.budget).toLocaleString('en-IN')}</span>}</div>{t.stops?.length>0&&<div className="trip-stops">{t.stops.map((s,i)=><span key={s.id??i}>{s.name}</span>)}</div>}</div><button className="delete-button" onClick={()=>void remove(t.id)} aria-label="Delete"><Trash2 size={16}/></button></article>)}</div>}</section>;
+}

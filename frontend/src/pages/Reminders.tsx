@@ -1,44 +1,13 @@
-import React, { useEffect, useState } from 'react';
-import { reminderService } from '../services/api';
-import type { Reminder } from '../types';
-import { Bell, CheckCircle2, Trash2 } from 'lucide-react';
-
-export const Reminders: React.FC = () => {
-  const [reminders, setReminders] = useState<Reminder[]>([]);
-
-  const load = () => reminderService.list().then(setReminders);
-  useEffect(() => { load(); }, []);
-
-  return (
-    <div className="space-y-6">
-      <h1 className="text-2xl font-bold text-charcoal">Upcoming Reminders</h1>
-      <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6">
-        {reminders.length === 0 ? <p className="text-gray-500">No upcoming reminders. Try saying "Remind me to study at 7 PM"</p> : (
-          <ul className="space-y-4">
-            {reminders.map(rem => (
-              <li key={rem.id} className="flex justify-between items-center border-b border-gray-50 pb-4 last:border-0 last:pb-0">
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-full bg-ivory flex items-center justify-center text-burgundy">
-                    <Bell size={18} />
-                  </div>
-                  <div>
-                    <p className="font-medium text-charcoal">{rem.title}</p>
-                    <p className="text-sm text-gray-500">{new Date(rem.remind_at).toLocaleString('en-IN')}</p>
-                  </div>
-                </div>
-                <div className="flex gap-2">
-                  <button onClick={async () => { await reminderService.complete(rem.id); load(); }} className="text-green-500 hover:text-green-700">
-                    <CheckCircle2 size={20} />
-                  </button>
-                  <button onClick={async () => { await reminderService.delete(rem.id); load(); }} className="text-gray-300 hover:text-red-500">
-                    <Trash2 size={20} />
-                  </button>
-                </div>
-              </li>
-            ))}
-          </ul>
-        )}
-      </div>
-    </div>
-  );
-};
+import { useEffect,useState } from 'react';
+import { Bell, Check, Trash2, RefreshCw } from 'lucide-react';
+import { remindersApi, ReminderItem } from '../api';
+export function Reminders(){
+ const [items,setItems]=useState<ReminderItem[]>([]);const [title,setTitle]=useState('');const [notes,setNotes]=useState('');const [when,setWhen]=useState('');const [error,setError]=useState('');const [busy,setBusy]=useState(false);
+ const load=async()=>{setBusy(true);setError('');try{const [pending,done]=await Promise.all([remindersApi.list(false),remindersApi.list(true)]);setItems([...pending,...done].sort((a,b)=>a.remind_at.localeCompare(b.remind_at)));}catch{setError('Could not load reminders. Check your backend connection.');}finally{setBusy(false);}};useEffect(()=>{void load();},[]);
+ const add=async(e:React.FormEvent)=>{e.preventDefault();if(!title.trim()||!when)return;try{await remindersApi.create({title,notes:notes||undefined,remind_at:new Date(when).toISOString()});setTitle('');setNotes('');setWhen('');await load();}catch{setError('Reminder could not be created. Check the date and time.');}};
+ const complete=async(id:number)=>{try{await remindersApi.complete(id);await load();}catch{setError('Could not complete this reminder.');}};const remove=async(id:number)=>{if(!window.confirm('Delete this reminder?'))return;try{await remindersApi.remove(id);await load();}catch{setError('Could not delete this reminder.');}};
+ return <section className="feature-page"><div className="feature-heading"><div><span className="eyebrow">STAY ON TRACK</span><h1>Reminders</h1><p>Give important things a time and a place in your day.</p></div><button className="icon-refresh" onClick={()=>void load()} aria-label="Refresh"><RefreshCw size={17}/></button></div>
+ <div className="metric-row"><div className="metric-card"><span>All reminders</span><strong>{items.length}</strong></div><div className="metric-card"><span>Upcoming</span><strong>{items.filter(x=>!x.completed&&new Date(x.remind_at)>=new Date()).length}</strong></div><div className="metric-card"><span>Completed</span><strong>{items.filter(x=>x.completed).length}</strong></div></div>
+ <form className="feature-form" onSubmit={add}><h2><Bell size={18}/> New reminder</h2><div className="form-grid"><label className="wide">What should I remind you about?<input required maxLength={200} value={title} onChange={e=>setTitle(e.target.value)} placeholder="e.g. Revise Java collections"/></label><label>When<input required type="datetime-local" value={when} onChange={e=>setWhen(e.target.value)}/></label><label>Notes<input maxLength={2000} value={notes} onChange={e=>setNotes(e.target.value)} placeholder="Optional details"/></label></div><button className="primary-action" disabled={busy||!title.trim()||!when}>Save reminder</button></form>
+ <div className="list-toolbar"><h2>Your reminders</h2></div>{error&&<p className="inline-error">{error}</p>}{busy&&items.length===0?<p className="empty-state">Loading reminders…</p>:items.length===0?<p className="empty-state">No reminders yet.</p>:<div className="record-list">{items.map(r=><article className={`record-card ${r.completed?'is-complete':''}`} key={r.id}><div className="record-icon"><Bell size={17}/></div><div className="record-main"><strong>{r.title}</strong>{r.notes&&<p>{r.notes}</p>}<div className="record-meta"><span>{new Date(r.remind_at).toLocaleString()}</span><span>{r.completed?'Completed':new Date(r.remind_at)<new Date()?'Past due':'Scheduled'}</span></div></div>{!r.completed&&<button className="complete-button" onClick={()=>void complete(r.id)} aria-label="Complete"><Check size={17}/></button>}<button className="delete-button" onClick={()=>void remove(r.id)} aria-label="Delete"><Trash2 size={16}/></button></article>)}</div>}</section>;
+}

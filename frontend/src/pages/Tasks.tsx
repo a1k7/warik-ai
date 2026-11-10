@@ -1,45 +1,19 @@
-import React, { useEffect, useState } from 'react';
-import { taskService } from '../services/api';
-import type { Task } from '../types';
-import { CheckCircle2, Circle, Trash2 } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { Check, Circle, Plus, Trash2, CalendarDays, RefreshCw } from 'lucide-react';
+import { tasksApi, TaskItem, TaskPriority } from '../api';
 
-export const Tasks: React.FC = () => {
-  const [tasks, setTasks] = useState<Task[]>([]);
-
-  const load = () => taskService.list().then(setTasks);
-  useEffect(() => { load(); }, []);
-
-  const handleComplete = async (id: number) => {
-    await taskService.complete(id);
-    load();
-  };
-  const handleDelete = async (id: number) => {
-    await taskService.delete(id);
-    load();
-  };
-
-  return (
-    <div className="space-y-6">
-      <h1 className="text-2xl font-bold text-charcoal">Your Tasks</h1>
-      <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6">
-        {tasks.length === 0 ? <p className="text-gray-500">No tasks yet. Ask Warik to add one!</p> : (
-          <ul className="space-y-4">
-            {tasks.map(task => (
-              <li key={task.id} className="flex items-center justify-between group border-b border-gray-50 pb-4 last:border-0 last:pb-0">
-                <div className="flex items-center gap-3">
-                  <button onClick={() => handleComplete(task.id)}>
-                    {task.completed ? <CheckCircle2 size={20} className="text-green-500" /> : <Circle size={20} className="text-gray-300 hover:text-burgundy" />}
-                  </button>
-                  <span className={task.completed ? "line-through text-gray-400" : "text-charcoal"}>{task.title}</span>
-                </div>
-                <button onClick={() => handleDelete(task.id)} className="text-gray-300 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity">
-                  <Trash2 size={18} />
-                </button>
-              </li>
-            ))}
-          </ul>
-        )}
-      </div>
-    </div>
-  );
-};
+const blank = {title:'', description:'', due_date:'', priority:'medium' as TaskPriority, category:''};
+export function Tasks() {
+ const [items,setItems]=useState<TaskItem[]>([]); const [form,setForm]=useState(blank); const [busy,setBusy]=useState(false); const [error,setError]=useState(''); const [filter,setFilter]=useState<'all'|'pending'|'done'>('all');
+ const load=async()=>{setBusy(true);setError('');try{setItems(await tasksApi.list());}catch{setError('Could not load tasks. Check that the backend is running and you are signed in.');}finally{setBusy(false);}};
+ useEffect(()=>{void load();},[]);
+ const add=async(e:React.FormEvent)=>{e.preventDefault();if(!form.title.trim())return;setBusy(true);setError('');try{await tasksApi.create({...form,due_date:form.due_date?new Date(form.due_date).toISOString():null});setForm(blank);await load();}catch{setError('Task could not be created. Check the fields and try again.');setBusy(false);}};
+ const toggle=async(t:TaskItem)=>{try{if(!t.completed)await tasksApi.complete(t.id);else await tasksApi.update(t.id,{completed:false});await load();}catch{setError('Task status could not be updated.');}};
+ const remove=async(id:number)=>{if(!window.confirm('Delete this task?'))return;try{await tasksApi.remove(id);await load();}catch{setError('Task could not be deleted.');}};
+ const shown=items.filter(t=>filter==='all'||(filter==='pending'?!t.completed:t.completed));
+ return <section className="feature-page"><div className="feature-heading"><div><span className="eyebrow">PERSONAL ORGANISATION</span><h1>Tasks</h1><p>Keep your priorities visible and your next steps clear.</p></div><button className="icon-refresh" onClick={()=>void load()} aria-label="Refresh"><RefreshCw size={17}/></button></div>
+ <div className="metric-row"><div className="metric-card"><span>Total tasks</span><strong>{items.length}</strong></div><div className="metric-card"><span>Pending</span><strong>{items.filter(t=>!t.completed).length}</strong></div><div className="metric-card"><span>Completed</span><strong>{items.filter(t=>t.completed).length}</strong></div></div>
+ <form className="feature-form" onSubmit={add}><h2><Plus size={18}/> Add a task</h2><div className="form-grid"><label className="wide">Task title<input required maxLength={200} value={form.title} onChange={e=>setForm({...form,title:e.target.value})} placeholder="e.g. Finish Java assignment"/></label><label className="wide">Description<input maxLength={2000} value={form.description} onChange={e=>setForm({...form,description:e.target.value})} placeholder="Add a little context (optional)"/></label><label>Due date<input type="datetime-local" value={form.due_date} onChange={e=>setForm({...form,due_date:e.target.value})}/></label><label>Priority<select value={form.priority} onChange={e=>setForm({...form,priority:e.target.value as TaskPriority})}><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option></select></label><label>Category<input maxLength={60} value={form.category} onChange={e=>setForm({...form,category:e.target.value})} placeholder="Study, work..."/></label></div><button className="primary-action" disabled={busy||!form.title.trim()} type="submit">Create task</button></form>
+ <div className="list-toolbar"><h2>Your tasks</h2><div className="filter-pills">{(['all','pending','done'] as const).map(f=><button key={f} className={filter===f?'selected':''} onClick={()=>setFilter(f)}>{f==='all'?'All':f==='pending'?'Pending':'Completed'}</button>)}</div></div>
+ {error&&<p className="inline-error">{error}</p>}{busy&&items.length===0?<p className="empty-state">Loading tasks…</p>:shown.length===0?<p className="empty-state">No tasks here yet. Add your first task above.</p>:<div className="record-list">{shown.map(t=><article className={`record-card ${t.completed?'is-complete':''}`} key={t.id}><button className="complete-button" onClick={()=>void toggle(t)} aria-label={t.completed?'Reopen task':'Complete task'}>{t.completed?<Check size={17}/>:<Circle size={17}/>}</button><div className="record-main"><strong>{t.title}</strong>{t.description&&<p>{t.description}</p>}<div className="record-meta">{t.due_date&&<span><CalendarDays size={13}/>{new Date(t.due_date).toLocaleString()}</span>}{t.category&&<span>{t.category}</span>}<span className={`priority priority-${t.priority}`}>{t.priority}</span></div></div><button className="delete-button" onClick={()=>void remove(t.id)} aria-label="Delete task"><Trash2 size={16}/></button></article>)}</div>}</section>;
+}

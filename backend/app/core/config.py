@@ -1,7 +1,7 @@
 
 from functools import lru_cache
 
-from pydantic import Field
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -16,7 +16,7 @@ class Settings(BaseSettings):
     app_name: str = "Warik AI"
     environment: str = "development"
     database_url: str = "sqlite:///./warik.db"
-    cors_origins: str = "http://localhost:5173"
+    cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
 
     # Authentication
     jwt_secret: str = "dev-only-secret-change-me"
@@ -56,10 +56,67 @@ class Settings(BaseSettings):
     groq_model: str = "llama-3.3-70b-versatile"
 
     # Travel and food integrations
+    # Worldwide OpenStreetMap-based travel discovery
+    nominatim_url: str = "https://nominatim.openstreetmap.org/search"
+    overpass_url: str = "https://overpass-api.de/api/interpreter"
+    geo_user_agent: str = "WarikAI/1.0 (travel planning; configure contact details)"
+    geo_timeout_seconds: float = Field(default=12.0, gt=0, le=60)
+    overpass_timeout_seconds: float = Field(default=25.0, gt=0, le=90)
+    nominatim_min_interval_seconds: float = Field(default=1.1, ge=1.0, le=10.0)
+
+    # Legacy optional provider key retained for backward compatibility.
     geoapify_api_key: str = ""
     duffel_api_key: str = ""
     stayapi_key: str = ""
     reef_api_key: str = ""
+
+    @model_validator(mode="after")
+    def validate_runtime_configuration(self):
+        provider = self.llm_provider.strip().lower()
+
+        if provider not in {"ollama", "groq"}:
+            raise ValueError("LLM_PROVIDER must be 'ollama' or 'groq'.")
+
+        if self.environment.strip().lower() == "production":
+            if (
+                self.jwt_secret == "dev-only-secret-change-me"
+                or len(self.jwt_secret) < 32
+            ):
+                raise ValueError(
+                    "Production requires a JWT_SECRET of at least 32 characters."
+                )
+
+            if provider == "groq" and not self.groq_api_key.strip():
+                raise ValueError(
+                    "GROQ_API_KEY is required when LLM_PROVIDER=groq."
+                )
+
+            database_url = self.database_url.strip().lower()
+            if not database_url.startswith(
+                (
+                    "postgres://",
+                    "postgresql://",
+                    "postgresql+psycopg://",
+                )
+            ):
+                raise ValueError(
+                    "Production requires PostgreSQL; SQLite is not allowed."
+                )
+
+            origins = self.cors_origin_list
+
+            if not origins or "*" in origins:
+                raise ValueError(
+                    "Production requires explicit CORS_ORIGINS; "
+                    "wildcard or empty origins are not allowed."
+                )
+
+            if any(not origin.startswith("https://") for origin in origins):
+                raise ValueError(
+                    "Production CORS origins must use HTTPS."
+                )
+
+        return self
 
     @property
     def cors_origin_list(self) -> list[str]:

@@ -1,91 +1,120 @@
-import asyncio
+"""Tests for capability-driven planning and safe workflow validation."""
 import json
-from pydantic import BaseModel
-from unittest.mock import patch
 
 from app.agents.universal_planner import UniversalTaskPlanner
-from app.tools import registry as registry_module
+from app.tools.registry import registry
 
 
-class SampleInput(BaseModel):
-    query: str
+class FakeProvider:
+    def __init__(self, response):
+        self.response = response
+        self.calls = []
+
+    async def _call(self, system, user, force_json=False):
+        self.calls.append((system, user, force_json))
+        return self.response
 
 
-class FakeTool:
-    name = "sample_search"
-    description = "Search sample data."
-    capability = "research"
-    input_schema = SampleInput
-    requires_confirmation = False
-    is_mutating = False
-    execution_status = "available"
+def _planner(response='{}'):
+    return UniversalTaskPlanner(provider=FakeProvider(response), tool_registry=registry)
 
 
-def _provider(payload):
-    class Provider:
-        async def _call(self, system, user, force_json=False):
-            return json.dumps(payload)
-    return Provider()
+def test_registry_exposes_live_capability_manifest():
+    manifest = registry.describe_tools()
+    names = {item["name"] for item in manifest}
+    assert "generate_advanced_itinerary" in names
+    assert "discover_food" in names
+    assert "create_task" in names
+    assert all("input_schema" in item for item in manifest)
 
 
-def test_universal_planner_accepts_registered_valid_tool():
-    payload = {
-        "decision": "workflow",
-        "plan": {
-            "goal_title": "Search",
-            "goal_description": "Find sample data",
+def test_planner_builds_schema_validated_workflow():
+    planner = _planner()
+    result = planner._build_plan(
+        {
+            "goal_title": "Create task",
+            "goal_description": "Create a reminder task",
             "context": {},
             "steps": [{
-                "id": "search",
-                "description": "Search sample data",
-                "tool": "sample_search",
-                "params": {"query": "cafes"},
+                "id": "task",
+                "description": "Create a task",
+                "tool": "create_task",
+                "params": {"title": "Buy groceries"},
                 "depends_on": [],
             }],
         },
-    }
-    planner = UniversalTaskPlanner(provider=_provider(payload))
-    with patch.object(registry_module.registry, "describe_tools", return_value=[]), \
-         patch.object(registry_module.registry, "get", return_value=FakeTool()):
-        result = asyncio.run(planner.interpret("Find cafes"))
-    assert result["decision"] == "workflow"
-    assert result["plan"].steps[0].params == {"query": "cafes"}
+        planner._capability_manifest(),
+    )
+    assert result.steps[0].tool == "create_task"
+    assert result.steps[0].params["title"] == "Buy groceries"
 
 
-def test_universal_planner_rejects_unregistered_tool():
-    payload = {
-        "decision": "workflow",
-        "plan": {
-            "goal_title": "Unsupported",
-            "goal_description": "",
-            "context": {},
-            "steps": [{
-                "id": "book",
-                "description": "Book a flight",
-                "tool": "invented_booking_tool",
-                "params": {},
-                "depends_on": [],
-            }],
-        },
-    }
-    planner = UniversalTaskPlanner(provider=_provider(payload))
-    with patch.object(registry_module.registry, "describe_tools", return_value=[]), \
-         patch.object(registry_module.registry, "get", return_value=None):
-        result = asyncio.run(planner.interpret("Book a flight"))
+def test_planner_rejects_unregistered_tools():
+    planner = _planner()
+    result = planner._build_plan(
+        {"steps": [{"id": "x", "tool": "invented_tool", "params": {}}]},
+        planner._capability_manifest(),
+    )
     assert result["decision"] == "clarification"
-    assert "not connected" in result["reply"]
+    assert "registered" in result["reply"]
 
 
-def test_orchestrator_uses_universal_planner_for_unmatched_actions(db_session, monkeypatch):
+def test_planner_asks_for_missing_required_parameters():
+    planner = _planner()
+    result = planner._build_plan(
+        {"steps": [{"id": "task", "tool": "create_task", "params": {}}]},
+        planner._capability_manifest(),
+    )
+    assert result["decision"] == "clarification"
+    assert "title" in result["reply"]
+
+
+def test_planner_rejects_dependency_cycles():
+    planner = _planner()
+    result = planner._build_plan(
+        {"steps": [
+            {"id": "a", "tool": "list_tasks", "params": {}, "depends_on": ["b"]},
+            {"id": "b", "tool": "list_tasks", "params": {}, "depends_on": ["a"]},
+        ]},
+        planner._capability_manifest(),
+    )
+    assert result["decision"] == "clarification"
+    assert "cycle" in result["reply"]
+
+
+def test_confirmation_required_tool_is_marked_for_approval():
+    planner = _planner()
+    result = planner._build_plan(
+        {"steps": [{
+            "id": "expense",
+            "tool": "add_expense",
+            "params": {"amount": 250, "category": "Food"},
+        }]},
+        planner._capability_manifest(),
+    )
+    assert result.steps[0].approval_required is True
+
+
+def test_interpret_returns_chat_decision():
+    provider = FakeProvider(json.dumps({"decision": "chat", "reply": "Hello!"}))
+    planner = UniversalTaskPlanner(provider=provider, tool_registry=registry)
+    import asyncio
+    result = asyncio.run(planner.interpret("Hello"))
+    assert result == {"decision": "chat", "reply": "Hello!", "plan": None}
+    assert provider.calls and provider.calls[0][2] is True
+
+
+def test_orchestrator_uses_universal_planner_for_unmatched_request(db_session, monkeypatch):
     import asyncio
     from app.agents import orchestrator
     from app.models import User
+    from app.core.security import hash_password
     from app.schemas.workflow import WorkflowPlan, WorkflowStep
 
     user = User(
-        email="universal-orchestrator@example.com",
-        name="Universal Planner Test",
-        password_hash="unused-test-hash",
+        email="universal-planner@example.com",
+        name="Planner Test",
+        password_hash=hash_password("password123"),
     )
     db_session.add(user)
     db_session.commit()
@@ -93,35 +122,25 @@ def test_orchestrator_uses_universal_planner_for_unmatched_actions(db_session, m
 
     plan = WorkflowPlan(
         goal_title="List open tasks",
-        goal_description="Show the user's open tasks",
+        goal_description="Retrieve the user's open tasks",
         context={},
-        steps=[
-            WorkflowStep(
-                id="list_tasks",
-                description="List open tasks",
-                tool="list_tasks",
-                params={},
-                depends_on=[],
-            )
-        ],
+        steps=[WorkflowStep(
+            id="tasks",
+            description="List open tasks",
+            tool="list_tasks",
+            params={"include_completed": False},
+        )],
     )
 
-    class FakePlanner:
-        def __init__(self, provider=None):
-            pass
+    async def fake_interpret(self, user_message, conversation_context=""):
+        return {"decision": "workflow", "reply": None, "plan": plan}
 
-        async def interpret(self, user_message, conversation_context=""):
-            return {"decision": "workflow", "plan": plan}
-
-    monkeypatch.setattr(orchestrator, "UniversalTaskPlanner", FakePlanner)
+    monkeypatch.setattr(orchestrator.UniversalTaskPlanner, "interpret", fake_interpret)
+    monkeypatch.setattr(orchestrator, "parse_deterministic", lambda _text: None)
     monkeypatch.setattr(orchestrator, "get_provider", lambda: object())
 
     response = asyncio.run(
-        orchestrator.handle_message(
-            db_session,
-            user,
-            "Show me the tasks I still need to finish",
-        )
+        orchestrator.handle_message(db_session, user, "show my open tasks")
     )
 
     assert response.structured_data is not None

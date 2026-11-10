@@ -1,10 +1,8 @@
 
 from datetime import datetime
 from typing import Literal, Optional, Any
-
-from pydantic import BaseModel, Field
-
-from pydantic import BaseModel, Field, model_validator
+from app.tools.provider_selector import ProviderSelector
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 StepStatus = Literal[
     "PENDING",
     "READY",
@@ -16,7 +14,32 @@ StepStatus = Literal[
     "FAILED",
     "BLOCKED",
     "SKIPPED",
+    "CANCELLED",
+    "RECONCILIATION_REQUIRED",
 ]
+
+
+class WorkflowInputBinding(BaseModel):
+    """A declarative reference to data produced by a direct workflow dependency."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    source_step: str = Field(min_length=1, max_length=100)
+    source_path: str = Field(
+        min_length=1,
+        max_length=512,
+        pattern=r"^[A-Za-z0-9_-]+(?:\.(?:[A-Za-z0-9_-]+|[0-9]+))*$",
+        description="Dot path through JSON objects and arrays, e.g. items.0.address",
+    )
+    required: bool = True
+    requires_verified: bool = False
+
+    @field_validator("source_path")
+    @classmethod
+    def reject_dunder_path_segments(cls, value: str) -> str:
+        if any(segment.startswith("__") for segment in value.split(".")):
+            raise ValueError("dunder/object-introspection paths are not allowed")
+        return value
 
 
 class WorkflowStep(BaseModel):
@@ -25,15 +48,19 @@ class WorkflowStep(BaseModel):
     tool: str
     params: dict = Field(default_factory=dict)
     depends_on: list[str] = Field(default_factory=list)
-    approval_required: bool = False
+    input_bindings: dict[str, WorkflowInputBinding] = Field(
+        default_factory=dict
+    )
 
-    # Workflow execution policies
+    provider_id: Optional[str] = None
+    provider_operation: Optional[str] = None
+    provider_region: Optional[str] = None
+
+    approval_required: bool = False
     required: bool = True
     dep_policy: Literal["all_success", "tolerate_failure"] = "all_success"
     max_retries: int = Field(default=1, ge=0, le=5)
     retry_count: int = Field(default=0, ge=0)
-
-    # Execution state
     status: StepStatus = "PENDING"
     result: Optional[Any] = None
     error: Optional[str] = None

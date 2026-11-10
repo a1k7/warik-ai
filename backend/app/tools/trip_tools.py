@@ -130,31 +130,54 @@ def _geocode_place(place_name: str) -> Optional[dict]:
 
 
 def _geocode_destination(destination: str) -> tuple[list[dict], Optional[str]]:
-    parts = re.split(r',|\s+and\s+|\s+to\s+|\s+covering\s+', str(destination))
-    parts = [p.strip() for p in parts if len(p.strip()) > 2]
-    if not parts:
-        parts = [destination.strip()]
+    """Resolve one destination or an explicitly separated multi-stop route.
+
+    Commas are not treated as route separators initially because they commonly
+    delimit administrative context (city, state, country). We first try the
+    complete place string, then fall back to comma-separated destinations only
+    when the complete string cannot be resolved.
+    """
+    raw = str(destination or "").strip()
+    if not raw:
+        return [], "I couldn't verify a destination because none was provided."
+
+    # Explicit route language is unambiguous and should be split first.
+    route_parts = re.split(r"\s+and\s+|\s+to\s+|\s+covering\s+", raw, flags=re.IGNORECASE)
+    has_route_separator = len(route_parts) > 1
+
+    if not has_route_separator:
+        # Preserve administrative commas: e.g. "Jaipur, Rajasthan, India".
+        whole_place = _geocode_place(raw)
+        if whole_place:
+            return [whole_place], None
+
+        # A comma list can still represent multiple destinations (e.g. Paris, Tokyo).
+        # Only use this fallback after the complete query fails.
+        candidates = [part.strip() for part in raw.split(",") if len(part.strip()) > 2]
+    else:
+        candidates = [part.strip() for part in route_parts if len(part.strip()) > 2]
 
     cities = []
     seen = set()
 
-    for part in parts:
+    for part in candidates:
         key = part.lower().strip()
         if key in STATE_TO_CITIES:
             for city_name in STATE_TO_CITIES[key]:
                 if city_name.lower() not in seen:
-                    c = _geocode_place(city_name)
-                    if c:
-                        cities.append(c)
+                    city = _geocode_place(city_name)
+                    if city:
+                        cities.append(city)
                         seen.add(city_name.lower())
-        else:
-            c = _geocode_place(part)
-            if c and c["name"].lower() not in seen:
-                cities.append(c)
-                seen.add(c["name"].lower())
+            continue
+
+        city = _geocode_place(part)
+        if city and city.get("name", "").lower() not in seen:
+            cities.append(city)
+            seen.add(city.get("name", "").lower())
 
     if not cities:
-        return [], f"I couldn't find any valid cities for '{destination}'."
+        return [], f"I couldn't verify the destination '{raw}'. Please provide a city or a more specific location."
     return cities, None
 
 
@@ -770,4 +793,26 @@ class SaveTripTool(BaseTool):
         )
         ctx.db.add(trip)
         ctx.db.commit()
-        return ToolResult(success=True, message=f"Saved your trip to {params.destination}!")
+        ctx.db.refresh(trip)
+        return ToolResult(
+            success=True,
+            message=f"Saved your trip to {params.destination}!",
+            data={"saved_trip_id": trip.id},
+        )
+
+    def verify(self, ctx: ToolContext, params: SaveTripInput, result: ToolResult) -> dict:
+        saved_trip_id = (result.data or {}).get("saved_trip_id")
+        saved = (ctx.db.query(SavedTrip).filter(
+            SavedTrip.id == saved_trip_id, SavedTrip.user_id == ctx.user.id
+        ).one_or_none() if saved_trip_id else None)
+        try:
+            expected_itinerary = json.loads(params.itinerary_json)
+        except (TypeError, json.JSONDecodeError):
+            expected_itinerary = None
+        matches = bool(saved and expected_itinerary is not None
+                       and saved.destination == params.destination
+                       and saved.days == params.days
+                       and saved.itinerary_data == expected_itinerary)
+        return {"verified": matches, "method": "database_record_lookup",
+                "evidence": {"saved_trip_id": saved_trip_id, "record_found": saved is not None,
+                             "user_scope_checked": True, "itinerary_matched": matches}}

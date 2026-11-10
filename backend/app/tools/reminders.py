@@ -35,6 +35,19 @@ class CreateReminderTool(BaseTool):
             data={"reminder_id": reminder.id},
         )
 
+    def verify(self, ctx: ToolContext, params: ReminderCreate, result: ToolResult) -> dict:
+        reminder_id = (result.data or {}).get("reminder_id")
+        saved = (ctx.db.query(Reminder).filter(Reminder.id == reminder_id, Reminder.user_id == ctx.user.id)
+                 .one_or_none() if reminder_id else None)
+        expected_at = params.remind_at.replace(tzinfo=None)
+        actual_at = saved.remind_at.replace(tzinfo=None) if saved else None
+        matches = bool(saved and saved.title == params.title
+                       and (saved.notes or None) == (params.notes or None)
+                       and actual_at == expected_at)
+        return {"verified": matches, "method": "database_record_lookup",
+                "evidence": {"reminder_id": reminder_id, "record_found": saved is not None,
+                             "user_scope_checked": True, "fields_matched": matches}}
+
 
 class ListRemindersTool(BaseTool):
     name = "list_reminders"

@@ -1,57 +1,15 @@
-import React, { useEffect, useState } from 'react';
-import { expenseService } from '../services/api';
-import type { Expense } from '../types';
-import { Trash2 } from 'lucide-react';
-
-export const Expenses: React.FC = () => {
-  const [expenses, setExpenses] = useState<Expense[]>([]);
-  const [summary, setSummary] = useState<any>({ total: "0" });
-
-  const load = async () => {
-    const [e, s] = await Promise.all([expenseService.list(), expenseService.getSummary('month')]);
-    setExpenses(e);
-    setSummary(s);
-  };
-
-  useEffect(() => { load(); }, []);
-
-  const handleDelete = async (id: number) => {
-    await expenseService.delete(id);
-    load();
-  };
-
-  return (
-    <div className="space-y-6">
-      <h1 className="text-2xl font-bold text-charcoal">Expenses</h1>
-      
-      <div className="bg-wine rounded-2xl p-6 text-white flex justify-between items-center">
-        <div>
-          <p className="text-rose text-sm font-medium mb-1">Total Spent This Month</p>
-          <h2 className="text-3xl font-bold">₹{summary.total}</h2>
-        </div>
-      </div>
-
-      <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6">
-        <h3 className="font-semibold text-charcoal mb-4">Recent Transactions</h3>
-        {expenses.length === 0 ? <p className="text-gray-500">No expenses recorded. Ask Warik "I spent ₹250 on lunch"</p> : (
-          <ul className="space-y-4">
-            {expenses.map(exp => (
-              <li key={exp.id} className="flex justify-between items-center border-b border-gray-50 pb-4 last:border-0 last:pb-0">
-                <div>
-                  <p className="font-medium text-charcoal">{exp.category}</p>
-                  <p className="text-sm text-gray-500">{exp.expense_date} {exp.description && `• ${exp.description}`}</p>
-                </div>
-                <div className="flex items-center gap-4">
-                  <span className="font-bold text-charcoal">₹{exp.amount}</span>
-                  <button onClick={() => handleDelete(exp.id)} className="text-gray-300 hover:text-red-500">
-                    <Trash2 size={16} />
-                  </button>
-                </div>
-              </li>
-            ))}
-          </ul>
-        )}
-      </div>
-    </div>
-  );
-};
+import {useEffect,useState} from 'react';
+import {Wallet,Trash2,RefreshCw} from 'lucide-react';
+import {expensesApi,ExpenseItem} from '../api';
+export function Expenses(){
+ const [items,setItems]=useState<ExpenseItem[]>([]);const [summary,setSummary]=useState<any>(null);const [budget,setBudget]=useState<any>(null);const [amount,setAmount]=useState('');const [category,setCategory]=useState('Food');const [description,setDescription]=useState('');const [date,setDate]=useState(new Date().toISOString().slice(0,10));const [period,setPeriod]=useState<'today'|'week'|'month'>('month');const [error,setError]=useState('');const [busy,setBusy]=useState(false);
+ const load=async()=>{setBusy(true);setError('');try{const [rows,s,b]=await Promise.all([expensesApi.list(),expensesApi.summary(period),expensesApi.budgetStatus()]);setItems(rows);setSummary(s);setBudget(b);}catch{setError('Could not load expense data. Check your backend connection.');}finally{setBusy(false);}};useEffect(()=>{void load();},[period]);
+ const add=async(e:React.FormEvent)=>{e.preventDefault();const n=Number(amount);if(!Number.isFinite(n)||n<=0)return;try{await expensesApi.create({amount:n,category,description:description||undefined,expense_date:date,currency:'INR'});setAmount('');setDescription('');await load();}catch{setError('Expense could not be saved. Amount must be greater than zero.');}};
+ const remove=async(id:number)=>{if(!window.confirm('Delete this expense?'))return;try{await expensesApi.remove(id);await load();}catch{setError('Could not delete expense.');}};
+ const total=items.reduce((s,x)=>s+Number(x.amount||0),0);const format=(v:number)=>new Intl.NumberFormat('en-IN',{style:'currency',currency:'INR',maximumFractionDigits:2}).format(v);
+ return <section className="feature-page"><div className="feature-heading"><div><span className="eyebrow">MONEY OVERVIEW</span><h1>Expenses</h1><p>Understand where your money goes, one entry at a time.</p></div><button className="icon-refresh" onClick={()=>void load()} aria-label="Refresh"><RefreshCw size={17}/></button></div>
+ <div className="metric-row"><div className="metric-card"><span>Recorded expenses</span><strong>{items.length}</strong></div><div className="metric-card"><span>Total recorded</span><strong>{format(total)}</strong></div><div className="metric-card"><span>Selected period</span><strong>{format(Number(summary?.total??summary?.total_amount??0))}</strong></div></div>
+ <div className="summary-panel"><div className="list-toolbar"><h2>Spending summary</h2><select value={period} onChange={e=>setPeriod(e.target.value as typeof period)}><option value="today">Today</option><option value="week">This week</option><option value="month">This month</option></select></div><p className="summary-total">{format(Number(summary?.total??summary?.total_amount??0))}</p><p className="muted-note">Summary returned by your expense service for the selected period.</p>{budget&&<p className="budget-note">Budget status: {typeof budget==='string'?budget:JSON.stringify(budget)}</p>}</div>
+ <form className="feature-form" onSubmit={add}><h2><Wallet size={18}/> Add an expense</h2><div className="form-grid"><label>Amount (INR)<input required type="number" min="0.01" step="0.01" value={amount} onChange={e=>setAmount(e.target.value)} placeholder="250.00"/></label><label>Category<select value={category} onChange={e=>setCategory(e.target.value)}>{['Food','Transport','Shopping','Education','Bills','Travel','Health','Other'].map(x=><option key={x}>{x}</option>)}</select></label><label>Date<input type="date" value={date} onChange={e=>setDate(e.target.value)}/></label><label>Description<input maxLength={2000} value={description} onChange={e=>setDescription(e.target.value)} placeholder="Optional details"/></label></div><button className="primary-action" disabled={busy||!amount||Number(amount)<=0}>Save expense</button></form>
+ <div className="list-toolbar"><h2>Recent expenses</h2></div>{error&&<p className="inline-error">{error}</p>}{items.length===0?<p className="empty-state">{busy?'Loading expenses…':'No expenses recorded yet.'}</p>:<div className="record-list">{[...items].sort((a,b)=>b.expense_date.localeCompare(a.expense_date)).map(x=><article className="record-card" key={x.id}><div className="record-icon"><Wallet size={17}/></div><div className="record-main"><strong>{x.category}</strong>{x.description&&<p>{x.description}</p>}<div className="record-meta"><span>{x.expense_date}</span></div></div><strong className="expense-amount">{new Intl.NumberFormat('en-IN',{style:'currency',currency:x.currency||'INR'}).format(Number(x.amount))}</strong><button className="delete-button" onClick={()=>void remove(x.id)} aria-label="Delete"><Trash2 size={16}/></button></article>)}</div>}</section>;
+}

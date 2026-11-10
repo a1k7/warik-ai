@@ -42,6 +42,13 @@ Return exactly this JSON structure:
 TRAVEL RULES:
 
 1. For a trip or itinerary, use generate_advanced_itinerary.
+1a. Extract the destination as a place name only. Do not append traveller counts,
+    dates, budgets, origin details, or the words "for X people".
+1b. Preserve administrative context when supplied: "Jaipur, Rajasthan, India"
+    is one destination, not three destinations.
+1c. For multiple stops, separate only clearly requested stops using "and",
+    "to", or an explicit route arrow. Do not split a place on commas.
+1d. If the destination is ambiguous, ask for clarification rather than guessing.
 2. Preserve all requested cities in their original order.
 3. Never use search_places_geoapify when using generate_advanced_itinerary.
 4. Itinerary parameters:
@@ -68,7 +75,10 @@ TRAVEL RULES:
 14. The summary must depend on every discovery step, including the itinerary.
 15. The summary is required and must use dep_policy tolerate_failure.
 16. Do not invent dates, locations, prices or user preferences.
-17. Return only valid JSON. No markdown or commentary.
+17. For trip budget calculations, use calculate_trip_budget only when the
+    user requests a budget calculation and required values are known.
+18. Never invent separate transportation, food or accommodation budget tools.
+19. Return only valid JSON. No markdown or commentary.
 """
 
 
@@ -176,6 +186,8 @@ class GoalInterpreter:
                     context.get("destination"),
                     "",
                 )
+                if isinstance(params["destination"], str):
+                    params["destination"] = " ".join(params["destination"].split())
 
                 # Enable integrated hotel discovery only when both dates
                 # are real ISO dates and checkout is after check-in.

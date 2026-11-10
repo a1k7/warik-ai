@@ -47,6 +47,36 @@ class AddExpenseTool(BaseTool):
             data={"expense_id": expense.id, "amount": str(expense.amount)},
         )
 
+    def verify(self, ctx: ToolContext, params: ExpenseCreate, result: ToolResult) -> dict:
+        """Read the persisted row back and compare it with the requested expense."""
+        expense_id = (result.data or {}).get("expense_id")
+        if not expense_id:
+            return {"verified": False, "method": "database_record_lookup", "evidence": {"reason": "missing_expense_id"}}
+        saved = (
+            ctx.db.query(Expense)
+            .filter(Expense.id == expense_id, Expense.user_id == ctx.user.id)
+            .one_or_none()
+        )
+        expected_date = params.expense_date or date.today()
+        matches = bool(
+            saved is not None
+            and Decimal(str(saved.amount)) == Decimal(str(params.amount))
+            and saved.currency == params.currency
+            and saved.category == params.category
+            and (saved.description or None) == (params.description or None)
+            and saved.expense_date == expected_date
+        )
+        return {
+            "verified": matches,
+            "method": "database_record_lookup",
+            "evidence": {
+                "expense_id": int(expense_id),
+                "record_found": saved is not None,
+                "user_scope_checked": True,
+                "fields_matched": matches,
+            },
+        }
+
 
 class ListExpensesTool(BaseTool):
     name = "list_expenses"

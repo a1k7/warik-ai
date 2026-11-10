@@ -45,6 +45,24 @@ class CreateTaskTool(BaseTool):
             data={"task_id": task.id},
         )
 
+    def verify(self, ctx: ToolContext, params: TaskCreate, result: ToolResult) -> dict:
+        task_id = (result.data or {}).get("task_id")
+        saved = (ctx.db.query(Task).filter(Task.id == task_id, Task.user_id == ctx.user.id).one_or_none()
+                 if task_id else None)
+        expected_due = params.due_date
+        actual_due = saved.due_date if saved else None
+        if expected_due and actual_due:
+            expected_due = expected_due.replace(tzinfo=None)
+            actual_due = actual_due.replace(tzinfo=None)
+        matches = bool(saved and saved.title == params.title
+                       and (saved.description or None) == (params.description or None)
+                       and saved.priority == params.priority.value
+                       and (saved.category or None) == (params.category or None)
+                       and actual_due == expected_due)
+        return {"verified": matches, "method": "database_record_lookup",
+                "evidence": {"task_id": task_id, "record_found": saved is not None,
+                             "user_scope_checked": True, "fields_matched": matches}}
+
 
 class ListTasksTool(BaseTool):
     name = "list_tasks"
@@ -116,3 +134,12 @@ class CompleteTaskTool(BaseTool):
             message=f"Marked '{task.title}' as completed.",
             data={"task_id": task.id},
         )
+
+    def verify(self, ctx: ToolContext, params: CompleteTaskInput, result: ToolResult) -> dict:
+        saved = (ctx.db.query(Task).filter(Task.id == params.task_id, Task.user_id == ctx.user.id)
+                 .one_or_none())
+        verified = bool(saved and saved.completed and saved.completed_at is not None)
+        return {"verified": verified, "method": "database_state_lookup",
+                "evidence": {"task_id": params.task_id, "record_found": saved is not None,
+                             "user_scope_checked": True, "completed": bool(saved and saved.completed),
+                             "completed_at_present": bool(saved and saved.completed_at)}}
