@@ -2,6 +2,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from app.models import Goal, User, Workflow
 from app.agents.workflow_engine import WorkflowEngine
 
 
@@ -155,3 +156,151 @@ def test_optional_rejection_allows_partial_completion(engine_and_workflow):
         engine._compute_overall_status(steps, None)
         == "PARTIALLY_COMPLETED"
     )
+
+
+@pytest.mark.parametrize("operation", ["approve", "reject", "retry"])
+def test_transition_refuses_to_overwrite_concurrent_workflow_change(
+    engine_and_workflow, operation
+):
+    engine, workflow, db = engine_and_workflow
+    if operation == "retry":
+        workflow.steps_json[0]["status"] = "FAILED"
+
+    engine._compare_and_swap_steps = MagicMock(return_value=False)
+    before = engine._steps(workflow)
+
+    if operation == "approve":
+        result = engine.approve_step(workflow, "sensitive")
+        assert result is False
+    elif operation == "reject":
+        result = engine.reject_step(workflow, "sensitive", "Not authorized")
+        assert result is False
+    else:
+        result = engine.retry_step(workflow, "sensitive")
+        assert result["ok"] is False
+        assert "concurrently" in result["reason"]
+
+    assert workflow.steps_json == before
+    db.add.assert_not_called()
+
+
+def test_approve_step_writes_audit_event(engine_and_workflow):
+    engine, workflow, db = engine_and_workflow
+
+    assert engine.approve_step(workflow, "sensitive") is True
+
+    audit_actions = [
+        call.args[0].action
+        for call in db.add.call_args_list
+        if call.args
+    ]
+    assert "workflow.step.approved" in audit_actions
+
+
+def test_retry_step_writes_audit_event():
+    db = MagicMock()
+    user = MagicMock()
+    user.id = 7
+    engine = WorkflowEngine(db, user)
+    workflow = MagicMock()
+    workflow.id = 44
+    workflow.steps_json = [{
+        "id": "unstable",
+        "tool": "unstable_tool",
+        "params": {},
+        "depends_on": [],
+        "status": "FAILED",
+        "retry_count": 0,
+        "max_retries": 1,
+    }]
+
+    result = engine.retry_step(workflow, "unstable")
+
+    assert result == {"ok": True, "retry_count": 1}
+    audit_actions = [
+        call.args[0].action
+        for call in db.add.call_args_list
+        if call.args
+    ]
+    assert "workflow.step.retried" in audit_actions
+
+def test_sqlite_compare_and_swap_rejects_stale_workflow_state(db_session):
+    user = User(
+        email="cas-integration@example.test",
+        name="CAS Integration",
+        password_hash="not-a-real-password-hash",
+    )
+    db_session.add(user)
+    db_session.flush()
+
+    goal = Goal(
+        user_id=user.id,
+        title="CAS integration test",
+        status="PLANNED",
+    )
+    db_session.add(goal)
+    db_session.flush()
+
+    original_steps = [
+        {
+            "id": "step-1",
+            "tool": "example_tool",
+            "params": {},
+            "depends_on": [],
+            "status": "PENDING",
+            "required": True,
+        }
+    ]
+    workflow = Workflow(
+        user_id=user.id,
+        goal_id=goal.id,
+        status="IN_PROGRESS",
+        steps_json=original_steps,
+    )
+    db_session.add(workflow)
+    db_session.commit()
+    db_session.refresh(workflow)
+
+    engine = WorkflowEngine(db_session, user)
+    stale_snapshot = [dict(step) for step in original_steps]
+
+    concurrent_steps = [
+        {
+            **original_steps[0],
+            "status": "COMPLETED",
+            "result": {"writer": "concurrent-update"},
+        }
+    ]
+    proposed_steps = [
+        {
+            **original_steps[0],
+            "status": "APPROVED",
+            "approval_granted": True,
+        }
+    ]
+
+    # Simulate another writer committing after the workflow was read.
+    db_session.query(Workflow).filter(
+        Workflow.id == workflow.id
+    ).update(
+        {Workflow.steps_json: concurrent_steps},
+        synchronize_session=False,
+    )
+    db_session.commit()
+
+    updated = engine._compare_and_swap_steps(
+        workflow,
+        stale_snapshot,
+        proposed_steps,
+    )
+
+    assert updated is False
+    assert workflow.steps_json == concurrent_steps
+
+    persisted = (
+        db_session.query(Workflow)
+        .filter(Workflow.id == workflow.id)
+        .one()
+    )
+    assert persisted.steps_json == concurrent_steps
+    assert persisted.steps_json != proposed_steps

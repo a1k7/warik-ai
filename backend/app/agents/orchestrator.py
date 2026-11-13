@@ -757,33 +757,19 @@ async def handle_message(
         if result.get("plan"):
             plan = result["plan"]
 
-            match = re.search(
-                r"(?:covering|including|across)\s+(.+?)(?:\s+for\b|\s+with\b|$)",
-                text,
-                re.IGNORECASE,
-            )
-
-            if match:
-                parts = re.split(
-                    r",|\s+and\s+|\s+to\s+",
-                    match.group(1).strip(),
-                )
-
-                cities = [
-                    part.strip()
-                    for part in parts
-                    if 2 < len(part.strip()) < 40
-                ]
-
-                if cities:
-                    plan.context["destination"] = ", ".join(cities)
+            # Preserve the structured destination from GoalInterpreter.
+            # Do not infer destinations from words following "including",
+            # "covering" or "across".
+            itinerary_destination = _resolve_itinerary_destination(plan)
 
             for step in plan.steps:
                 if "itinerary" in step.tool:
-                    step.params["destination"] = plan.context.get(
-                        "destination",
-                        "",
-                    )
+                    if not itinerary_destination:
+                        return AgentMessageResponse(
+                            reply="Which destination would you like to visit?"
+                        )
+
+                    step.params["destination"] = itinerary_destination
 
                     if "days" in step.params:
                         try:
@@ -798,20 +784,6 @@ async def handle_message(
                             r"\1",
                             step.params[key],
                         )
-
-                if "cab" in step.tool:
-                    destination = (
-                        plan.context.get("destination", "").split(",")[0].strip()
-                    )
-
-                    step.params.setdefault(
-                        "pickup_location",
-                        f"{destination} Airport",
-                    )
-                    step.params.setdefault(
-                        "dropoff_location",
-                        destination or "City Center",
-                    )
 
             old = (
                 db.query(Workflow)
@@ -1384,3 +1356,30 @@ async def handle_confirm(
         message=response.reply,
     )
     return response
+
+def _resolve_itinerary_destination(plan, text: str | None = None) -> str | None:
+    """Resolve destination from structured planner data without guessing."""
+
+    context = getattr(plan, "context", None)
+    if not isinstance(context, dict):
+        context = {}
+
+    destination = context.get("destination")
+
+    if isinstance(destination, str) and destination.strip():
+        return destination.strip()
+
+    for step in getattr(plan, "steps", []):
+        if "itinerary" not in getattr(step, "tool", ""):
+            continue
+
+        params = getattr(step, "params", None) or {}
+        candidate = params.get("destination")
+
+        if isinstance(candidate, str) and candidate.strip():
+            candidate = candidate.strip()
+            context["destination"] = candidate
+            plan.context = context
+            return candidate
+
+    return None

@@ -745,11 +745,13 @@ class GeoapifyPlacesTool(BaseTool):
 
 class CabInput(BaseModel):
     pickup_location: str = Field(
-        default="Current Location"
+        ...,
+        description="The pickup location explicitly supplied or confirmed by the user.",
     )
 
     dropoff_location: str = Field(
-        default="City Center"
+        ...,
+        description="The drop-off location explicitly supplied or confirmed by the user.",
     )
 
 
@@ -788,9 +790,11 @@ class CabDeepLinkTool(BaseTool):
     ) -> str:
         if provider_id == "uber":
             return (
-                "https://m.uber.com/ul/?action=setPickup&pickup=my_location"
-                "&dropoff[formatted_address]="
-                + quote(params.dropoff_location)
+                "https://m.uber.com/ul/?action=setPickup"
+                "&pickup[formatted_address]="
+                + quote(params.pickup_location, safe="")
+                + "&dropoff[formatted_address]="
+                + quote(params.dropoff_location, safe="")
             )
 
         if provider_id == "ola":

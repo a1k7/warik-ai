@@ -53,7 +53,7 @@ export const Home = () => {
           <div className="home-greeting">
             <div className="greeting-copy">
               <span className="overline"><span className="online-dot"/> YOUR PERSONAL AI COMPANION</span>
-              <h1>Good morning,<br/><em>Akhilesh.</em></h1>
+              <h1>Welcome,<br/><em>Akhilesh.</em></h1>
               <p>What would you like to make happen today?</p>
             </div>
             <div className="greeting-date">{new Date().toLocaleDateString('en-IN', { weekday: 'long', day: 'numeric', month: 'long' })}</div>

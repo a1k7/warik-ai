@@ -99,3 +99,59 @@ export const travelApi = {
   update: async (id:number, payload: Record<string, unknown>) => (await api.put<TravelPlan>(`/travel/${id}`, payload)).data,
   remove: async (id:number) => { await api.delete(`/travel/${id}`); },
 };
+
+
+export interface SwiggyAddress {
+  id: string;
+  addressCategory?: string;
+  addressLine?: string;
+}
+
+export interface SwiggyRestaurant {
+  id: string;
+  name: string;
+  cuisines?: string[];
+  avgRating?: number | string | null;
+  distanceKm?: number | string | null;
+  deliveryTimeMinutes?: number | null;
+}
+
+export const swiggyApi = {
+  addresses: async () =>
+    (await api.get<{is_mock: boolean; addresses: SwiggyAddress[]}>(
+      '/integrations/swiggy/addresses'
+    )).data,
+  search: async (query: string, addressId: string) =>
+    (await api.post<{
+      is_mock: boolean;
+      restaurants: SwiggyRestaurant[];
+      notice?: string;
+    }>('/integrations/swiggy/restaurants/search', null, {
+      params: {query, address_id: addressId}
+    })).data,
+};
+
+// Swiggy account connection and OAuth operations
+export interface SwiggyConnectionStatus {
+  connected: boolean;
+  status: string;
+  expires_at?: string;
+  scope?: string;
+}
+
+export const swiggyIntegrationApi = {
+  status: async () =>
+    (await api.get<SwiggyConnectionStatus>(
+      '/integrations/swiggy/status'
+    )).data,
+
+  startOAuth: async () =>
+    (await api.post<{ authorization_url: string }>(
+      '/integrations/swiggy/oauth/start'
+    )).data,
+
+  disconnect: async () =>
+    (await api.delete<{ connected: boolean; status: string }>(
+      '/integrations/swiggy'
+    )).data,
+};

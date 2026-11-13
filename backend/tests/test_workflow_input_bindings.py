@@ -223,3 +223,98 @@ def test_planner_accepts_required_parameter_supplied_by_binding():
     assert isinstance(result, WorkflowPlan)
     assert result.steps[1].params == {}
     assert result.steps[1].input_bindings["location"].source_step == "hotel_search"
+
+
+@pytest.mark.parametrize("dep_policy", ["all_success", "tolerate_failure"])
+def test_optional_step_is_skipped_when_required_binding_source_was_skipped(
+    dep_policy,
+):
+    db = MagicMock()
+    db.get.return_value = None
+    engine = WorkflowEngine(db, MagicMock(id=5), tool_registry=FakeRegistry())
+
+    workflow = MagicMock(id=10, goal_id=20, status="PLANNED")
+    workflow.steps_json = [
+        {
+            "id": "source",
+            "tool": "consume_location",
+            "params": {"location": "unused"},
+            "depends_on": [],
+            "status": "SKIPPED",
+            "required": False,
+        },
+        {
+            "id": "optional_consumer",
+            "tool": "consume_location",
+            "params": {},
+            "depends_on": ["source"],
+            "status": "PENDING",
+            "required": False,
+            "dep_policy": dep_policy,
+            "input_bindings": {
+                "location": {
+                    "source_step": "source",
+                    "source_path": "location",
+                    "required": True,
+                }
+            },
+        },
+    ]
+
+    with patch.object(engine, "_invoke_tool") as invoke:
+        result = engine.execute(workflow)
+
+    assert result["executed"] == []
+    assert workflow.steps_json[1]["status"] == "SKIPPED"
+    assert workflow.steps_json[1]["error"].startswith("Skipped optional step:")
+    assert (
+        "dependency" in workflow.steps_json[1]["error"]
+        or "required input" in workflow.steps_json[1]["error"]
+    )
+    invoke.assert_not_called()
+
+
+def test_required_step_depending_on_skipped_step_is_blocked():
+    db = MagicMock()
+    db.get.return_value = None
+    engine = WorkflowEngine(db, MagicMock(id=5), tool_registry=FakeRegistry())
+
+    workflow = MagicMock(id=10, goal_id=20, status="PLANNED")
+    workflow.steps_json = [
+        {
+            "id": "source",
+            "tool": "consume_location",
+            "params": {"location": "unused"},
+            "depends_on": [],
+            "status": "SKIPPED",
+        },
+        {
+            "id": "required_consumer",
+            "tool": "consume_location",
+            "params": {"location": "Bengaluru"},
+            "depends_on": ["source"],
+            "status": "PENDING",
+            "required": True,
+        },
+    ]
+
+    with patch.object(engine, "_invoke_tool") as invoke:
+        engine.execute(workflow)
+
+    assert workflow.steps_json[1]["status"] == "BLOCKED"
+    invoke.assert_not_called()
+
+
+def test_skipped_optional_step_does_not_make_completed_workflow_partial():
+    db = MagicMock()
+    engine = WorkflowEngine(db, MagicMock(id=5), tool_registry=FakeRegistry())
+
+    status = engine._compute_overall_status(
+        [
+            {"id": "main", "required": True, "status": "COMPLETED"},
+            {"id": "supplementary", "required": False, "status": "SKIPPED"},
+        ],
+        None,
+    )
+
+    assert status == "COMPLETED"

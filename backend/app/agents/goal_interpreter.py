@@ -315,19 +315,29 @@ class GoalInterpreter:
                 continue
 
             if tool == "get_cab_links":
-                params["pickup_location"] = first_value(
+                pickup = first_value(
                     params.get("pickup_location"),
                     params.get("from"),
-                    "Current Location",
                 )
-
-                params["dropoff_location"] = first_value(
+                dropoff = first_value(
                     params.get("dropoff_location"),
                     params.get("to"),
-                    context.get("destination"),
-                    "City Center",
                 )
 
+                # Cab discovery is supplementary. Never manufacture either
+                # location or infer one from the itinerary destination.
+                if not (
+                    is_real_value(pickup)
+                    and is_real_value(dropoff)
+                ):
+                    logger.info(
+                        "Skipping optional cab links because pickup or "
+                        "drop-off was not explicitly resolved."
+                    )
+                    continue
+
+                params["pickup_location"] = pickup.strip()
+                params["dropoff_location"] = dropoff.strip()
                 params.pop("from", None)
                 params.pop("to", None)
 
