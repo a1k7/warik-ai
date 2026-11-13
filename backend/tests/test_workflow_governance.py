@@ -1,9 +1,14 @@
 from unittest.mock import MagicMock, patch
 
 import pytest
+from sqlalchemy import update
+from sqlalchemy.dialects import postgresql
 
 from app.models import Goal, User, Workflow
-from app.agents.workflow_engine import WorkflowEngine
+from app.agents.workflow_engine import (
+    WorkflowEngine,
+    _workflow_steps_match_condition,
+)
 
 
 @pytest.fixture
@@ -223,6 +228,36 @@ def test_retry_step_writes_audit_event():
         if call.args
     ]
     assert "workflow.step.retried" in audit_actions
+
+def test_postgresql_cas_uses_jsonb_equality():
+    session = MagicMock()
+    session.get_bind.return_value.dialect.name = "postgresql"
+
+    old_steps = [{"id": "step-1", "status": "PENDING"}]
+    condition = _workflow_steps_match_condition(session, old_steps)
+    statement = update(Workflow).where(condition)
+
+    compiled = statement.compile(dialect=postgresql.dialect())
+    sql = str(compiled)
+
+    assert "CAST(workflows.steps_json AS JSONB)" in sql
+    assert sql.count("JSONB") >= 2
+    assert any(value == old_steps for value in compiled.params.values())
+
+
+def test_sqlite_cas_keeps_native_json_comparison():
+    session = MagicMock()
+    session.get_bind.return_value.dialect.name = "sqlite"
+
+    old_steps = [{"id": "step-1", "status": "PENDING"}]
+    condition = _workflow_steps_match_condition(session, old_steps)
+    statement = update(Workflow).where(condition)
+
+    sql = str(statement.compile())
+
+    assert "CAST(" not in sql
+    assert "workflows.steps_json =" in sql
+
 
 def test_sqlite_compare_and_swap_rejects_stale_workflow_state(db_session):
     user = User(
