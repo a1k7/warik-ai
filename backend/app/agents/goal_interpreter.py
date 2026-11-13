@@ -10,6 +10,10 @@ from app.tools.registry import registry
 
 logger = logging.getLogger(__name__)
 
+class TravelClarificationRequired(ValueError):
+    """Raised when a travel workflow needs additional user information."""
+
+
 GOAL_INTERPRETER_PROMPT = """You are the goal interpreter for Warik AI.
 
 Convert the user's goal into a structured workflow.
@@ -211,6 +215,12 @@ class GoalInterpreter:
                     and is_valid_date(requested_check_out)
                 )
 
+                if hotel_was_requested and not hotel_dates_valid:
+                    raise TravelClarificationRequired(
+                        "What are your hotel check-in and check-out dates? "
+                        "Please provide both dates in YYYY-MM-DD format."
+                    )
+
                 if hotel_dates_valid:
                     check_in_date = datetime.strptime(
                         requested_check_in.strip(), "%Y-%m-%d"
@@ -218,20 +228,22 @@ class GoalInterpreter:
                     check_out_date = datetime.strptime(
                         requested_check_out.strip(), "%Y-%m-%d"
                     ).date()
-                    hotel_dates_valid = check_out_date > check_in_date
 
-                params["include_hotels"] = (
-                    hotel_was_requested and hotel_dates_valid
-                )
+                    if check_out_date <= check_in_date:
+                        raise TravelClarificationRequired(
+                            "Your hotel check-out date must be after your "
+                            "check-in date. Please provide the correct dates."
+                        )
 
-                if params["include_hotels"]:
+                params["include_hotels"] = hotel_was_requested
+
+                if hotel_was_requested:
                     params["check_in"] = requested_check_in.strip()
                     params["check_out"] = requested_check_out.strip()
 
                     if hotel_travellers is not None:
                         params["travellers"] = hotel_travellers
                 else:
-                    # Do not pass LLM placeholders to the hotel provider.
                     params["check_in"] = None
                     params["check_out"] = None
 
@@ -468,6 +480,13 @@ class GoalInterpreter:
                 "plan": plan,
                 "needs_clarification": False,
                 "clarification_question": None,
+            }
+
+        except TravelClarificationRequired as exc:
+            return {
+                "plan": None,
+                "needs_clarification": True,
+                "clarification_question": str(exc),
             }
 
         except Exception as exc:

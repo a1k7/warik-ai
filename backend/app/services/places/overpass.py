@@ -225,6 +225,11 @@ class OverpassProvider:
                 or tags.get("amenity")
                 or tags.get("leisure")
             )
+            dietary_tags = {
+                key: value
+                for key, value in tags.items()
+                if key.startswith("diet:") and value not in (None, "")
+            }
 
             results.append(
                 {
@@ -234,6 +239,7 @@ class OverpassProvider:
                     "lat": item_lat,
                     "lon": item_lon,
                     "category": category,
+                    "dietary_tags": dietary_tags,
                     "opening_hours": tags.get("opening_hours"),
                     "entry_fee": entry_fee,
                     "image_url": None,

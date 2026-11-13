@@ -13,6 +13,7 @@ from pydantic import BaseModel, Field
 
 from app.agents.llm_provider import get_provider
 from app.core.config import settings
+from app.services.geospatial import geocoder, places_provider
 from app.models import SavedTrip
 from app.schemas.trip import (
     BudgetItem, ItineraryActivity, ItineraryDay, MealSuggestion,
@@ -107,27 +108,72 @@ def _geocode_place(place_name: str) -> Optional[dict]:
     key = place_name.lower().strip()
     if key in KNOWN_CITIES:
         return {"type": "city", **KNOWN_CITIES[key]}
-    if not settings.geoapify_api_key:
-        return None
+
+    if settings.geoapify_api_key:
+        try:
+            with httpx.Client(timeout=10.0) as client:
+                res = client.get(
+                    GEOAPIFY_GEOCODE,
+                    params={
+                        "text": place_name,
+                        "limit": 1,
+                        "apiKey": settings.geoapify_api_key,
+                    },
+                )
+                res.raise_for_status()
+                data = res.json()
+
+            features = data.get("features", []) if isinstance(data, dict) else []
+            if features:
+                props = features[0].get("properties", {})
+                lat = float(props["lat"])
+                lon = float(props["lon"])
+                if -90 <= lat <= 90 and -180 <= lon <= 180:
+                    return {
+                        "name": str(
+                            props.get("city")
+                            or props.get("county")
+                            or place_name
+                        ).strip(),
+                        "state": str(props.get("state") or "").strip(),
+                        "country": str(props.get("country") or "").strip(),
+                        "lat": lat,
+                        "lon": lon,
+                        "type": "city",
+                        "source": "Geoapify",
+                    }
+        except (httpx.HTTPError, KeyError, TypeError, ValueError, AttributeError):
+            pass
+
     try:
-        with httpx.Client(timeout=10.0) as client:
-            res = client.get(GEOAPIFY_GEOCODE, params={"text": place_name, "limit": 1, "apiKey": settings.geoapify_api_key})
-            res.raise_for_status()
-            data = res.json()
+        candidates = geocoder().search(place_name, limit=5)
     except Exception:
         return None
-    if not data.get("features"):
-        return None
-    props = data["features"][0]["properties"]
-    return {
-        "name": str(props.get("city") or props.get("county") or place_name).strip(),
-        "state": str(props.get("state") or "").strip(),
-        "country": str(props.get("country") or "").strip(),
-        "lat": float(props["lat"]),
-        "lon": float(props["lon"]),
-        "type": "city",
-    }
 
+    accepted_types = {
+        "city", "town", "village", "municipality", "administrative"
+    }
+    for candidate in candidates:
+        if str(candidate.get("type") or "").lower() not in accepted_types:
+            continue
+        try:
+            lat = float(candidate["lat"])
+            lon = float(candidate["lon"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if not (-90 <= lat <= 90 and -180 <= lon <= 180):
+            continue
+        if not str(candidate.get("name") or "").strip():
+            continue
+        return {
+            **candidate,
+            "name": str(candidate["name"]).strip(),
+            "lat": lat,
+            "lon": lon,
+            "source": candidate.get("source") or "OpenStreetMap Nominatim",
+        }
+
+    return None
 
 def _geocode_destination(destination: str) -> tuple[list[dict], Optional[str]]:
     """Resolve one destination or an explicitly separated multi-stop route.
@@ -186,57 +232,92 @@ def _geocode_destination(destination: str) -> tuple[list[dict], Optional[str]]:
 # ═══════════════════════════════════════════════════════════
 
 def _fetch_places(city: dict, categories: str, limit: int, radius_m: int) -> list[dict]:
-    if not settings.geoapify_api_key:
-        return []
+    if settings.geoapify_api_key:
+        try:
+            with httpx.Client(timeout=15.0) as client:
+                res = client.get(
+                    GEOAPIFY_PLACES,
+                    params={
+                        "categories": categories,
+                        "filter": f"circle:{city['lon']},{city['lat']},{radius_m}",
+                        "limit": limit,
+                        "apiKey": settings.geoapify_api_key,
+                    },
+                )
+                res.raise_for_status()
+                data = res.json()
+
+            places = []
+            features = data.get("features", []) if isinstance(data, dict) else []
+            for feature in features:
+                props = feature.get("properties", {})
+                coords = feature.get("geometry", {}).get("coordinates", [])
+                if not isinstance(coords, (list, tuple)) or len(coords) < 2:
+                    continue
+                try:
+                    lon, lat = float(coords[0]), float(coords[1])
+                except (TypeError, ValueError):
+                    continue
+                if not (-90 <= lat <= 90 and -180 <= lon <= 180):
+                    continue
+
+                raw_tags = (
+                    (props.get("datasource", {}) or {}).get("raw", {}) or {}
+                )
+                fee = raw_tags.get("fee") or raw_tags.get("charge")
+                entry_fee = (
+                    "Free"
+                    if fee is not None and str(fee).lower() in ("no", "false", "0")
+                    else (str(fee) if fee is not None else None)
+                )
+                name = str(props.get("name") or "").strip()
+                if len(name) < 3:
+                    continue
+
+                places.append({
+                    "name": name,
+                    "address": str(
+                        props.get("address_line2") or props.get("formatted") or ""
+                    ).strip(),
+                    "city": city["name"],
+                    "lat": lat,
+                    "lon": lon,
+                    "category": (props.get("categories") or [None])[0],
+                    "opening_hours": str(
+                        props.get("opening_hours") or ""
+                    ).strip() or None,
+                    "entry_fee": entry_fee,
+                    "image_url": raw_tags.get("image") or raw_tags.get("image_url"),
+                    "wikimedia_commons": raw_tags.get("wikimedia_commons"),
+                    "wikipedia": raw_tags.get("wikipedia"),
+                    "wikidata": raw_tags.get("wikidata"),
+                    "source": "Geoapify",
+                })
+
+            if places:
+                return places[:limit]
+        except (
+            httpx.HTTPError, KeyError, TypeError, ValueError, AttributeError
+        ):
+            pass
+
+    kind = (
+        "restaurant"
+        if "catering" in categories or "restaurant" in categories
+        else "attraction"
+    )
     try:
-        with httpx.Client(timeout=15.0) as client:
-            res = client.get(GEOAPIFY_PLACES, params={
-                "categories": categories,
-                "filter": f"circle:{city['lon']},{city['lat']},{radius_m}",
-                "limit": limit,
-                "apiKey": settings.geoapify_api_key,
-            })
-            res.raise_for_status()
-            data = res.json()
+        places = places_provider().search(
+            city,
+            kind=kind,
+            limit=limit,
+            radius_m=radius_m,
+        )
+        for place in places:
+            place.setdefault("source", "OpenStreetMap")
+        return places[:limit]
     except Exception:
         return []
-
-    places = []
-    for f in data.get("features", []):
-        props = f.get("properties", {})
-        coords = f.get("geometry", {}).get("coordinates", [None, None])
-        lon, lat = (coords[0], coords[1]) if len(coords) >= 2 else (None, None)
-        if lat is None or lon is None:
-            continue
-        raw_tags = (props.get("datasource", {}) or {}).get("raw", {}) or {}
-        fee = raw_tags.get("fee") or raw_tags.get("charge")
-        entry_fee = "Free" if fee is not None and str(fee).lower() in ("no", "false", "0") else (str(fee) if fee is not None else None)
-
-        name = str(props.get("name") or "").strip()
-        if len(name) < 3:
-            continue
-
-        places.append({
-            "name": name,
-            "address": str(props.get("address_line2") or props.get("formatted") or "").strip(),
-            "city": city["name"],
-            "lat": float(lat),
-            "lon": float(lon),
-            "category": (props.get("categories") or [None])[0],
-            "opening_hours": str(props.get("opening_hours") or "").strip() or None,
-            "entry_fee": entry_fee,
-            "image_url": (
-                raw_tags.get("image")
-                or raw_tags.get("image_url")
-                or None
-            ),
-            "wikimedia_commons": raw_tags.get("wikimedia_commons"),
-            "wikipedia": raw_tags.get("wikipedia"),
-            "wikidata": raw_tags.get("wikidata"),
-            "source": "Geoapify/OSM",
-        })
-    return places
-
 
 def _is_valid_place(place: dict) -> bool:
     """Lenient validation — only reject obvious commercial noise."""
@@ -255,40 +336,14 @@ def _is_valid_place(place: dict) -> bool:
 # ═══════════════════════════════════════════════════════════
 
 def _generate_descriptions(names: list[str], city_name: str) -> dict[str, str]:
-    """Generate descriptions. ALWAYS returns a non-empty string for each place."""
-    if not names:
-        return {}
-
-    prompt = f"""Write ONE short factual sentence (max 20 words) for each of these real places in {city_name}.
-
-Places:
-{chr(10).join(f'{i+1}. {n}' for i, n in enumerate(names))}
-
-Return ONLY JSON: {{"1": "sentence", "2": "sentence", ...}}"""
-
-    parsed = {}
-    try:
-        raw = get_provider().generate(prompt, format="json") or ""
-        cleaned = re.sub(r"^```json\s*|\s*```$", "", raw, flags=re.MULTILINE).strip()
-        parsed = json.loads(cleaned) if cleaned else {}
-    except Exception:
-        pass
-
-    out = {}
-    for i, name in enumerate(names):
-        val = parsed.get(str(i + 1)) if isinstance(parsed, dict) else None
-        if isinstance(val, str) and val.strip() and len(val.strip()) > 10:
-            out[name] = val.strip()[:250]
-        else:
-            # NEVER drop — always fallback
-            out[name] = f"A popular attraction in {city_name}."
-    return out
-
-
-# ═══════════════════════════════════════════════════════════
-# DAY BUILDER
-# ═══════════════════════════════════════════════════════════
-
+    """Return conservative descriptions without inventing place facts."""
+    return {
+        name: (
+            f"A place listed in {city_name}. Confirm visitor access, current hours, "
+            "and any entry requirements before visiting."
+        )
+        for name in names
+    }
 
 @lru_cache(maxsize=512)
 def _fetch_commons_image(place_name: str, city_name: str) -> dict:
@@ -375,45 +430,41 @@ def _build_activity(place: dict, slot: str, time_str: str, description: str) -> 
         entry_fee=place.get("entry_fee"),
         lat=place["lat"],
         lon=place["lon"],
-        source="Geoapify/OSM",
+        source=place.get("source") or "Unknown source",
         map_url=osm_map_url(place["lat"], place["lon"]),
         category=place.get("category"),
         image_url=image.get("image_url"),
         image_credit=image.get("image_credit"),
         image_source_url=image.get("image_source_url"),
         verification={
-            "place_exists": True,
-            "location_verified": True,
-            "category_verified": True,
-            "tourism_suitability_verified": True,
-            "hours_verified": place.get("opening_hours") is not None,
-            "price_verified": place.get("entry_fee") is not None,
+            "source_record_found": True,
+            "coordinates_available": True,
+            "category_tag_present": bool(place.get("category")),
+            "tourism_suitability_verified": False,
+            "hours_verified": False,
+            "price_verified": False,
         },
     )
 
 
 def _schedule_places(places: list[dict], descriptions: dict[str, str]) -> tuple[list, list, list]:
-    """Assign places to morning/afternoon/evening slots with times."""
+    """Group places into broad day periods without inventing visit times."""
     morning, afternoon, evening = [], [], []
-    times = ["09:00", "10:30", "12:00", "14:00", "15:30", "17:00", "18:30"]
+    slots = ("morning", "afternoon", "evening")
+    groups = {"morning": morning, "afternoon": afternoon, "evening": evening}
 
-    for i, p in enumerate(places[:6]):
-        time_str = times[i] if i < len(times) else "19:00"
-        hour = int(time_str.split(":")[0])
-        if hour < 12:
-            slot = "morning"
-        elif hour < 17:
-            slot = "afternoon"
-        else:
-            slot = "evening"
-
-        act = _build_activity(p, slot, time_str, descriptions.get(p["name"], f"Attraction in {p['city']}."))
-        if slot == "morning":
-            morning.append(act)
-        elif slot == "afternoon":
-            afternoon.append(act)
-        else:
-            evening.append(act)
+    for i, place in enumerate(places[:6]):
+        slot = slots[i % len(slots)]
+        activity = _build_activity(
+            place,
+            slot,
+            None,
+            descriptions.get(
+                place["name"],
+                f"Place listed in {place.get('city', 'the destination')}.",
+            ),
+        )
+        groups[slot].append(activity)
 
     return morning, afternoon, evening
 
@@ -532,7 +583,7 @@ class GenerateAdvancedItineraryTool(BaseTool):
                             category=r.get("category"),
                             address=r.get("address"),
                             map_url=osm_map_url(r["lat"], r["lon"]),
-                            source="Geoapify/OSM",
+                            source=r.get("source") or "Unknown source",
                         ))
 
                     # Transfer notes
@@ -540,12 +591,10 @@ class GenerateAdvancedItineraryTool(BaseTool):
                     if is_transfer:
                         prev_city_obj = next((c for c in cities if c["name"] == prev_city), None)
                         if prev_city_obj:
-                            dist_km = haversine_km(prev_city_obj["lat"], prev_city_obj["lon"], city["lat"], city["lon"])
-                            hours = round(dist_km / 45, 1)
                             trans_notes.append(
-                                f"Intercity transfer: {prev_city} → {city_name} "
-                                f"(~{dist_km:.0f} km, ~{hours}h by road). "
-                                f"Leave {prev_city} in the morning to arrive by afternoon."
+                                f"Intercity transfer: {prev_city} → {city_name}. "
+                                "Check a current route planner for road distance, journey time, "
+                                "and available transport before departure."
                             )
 
                     # Day title
@@ -675,9 +724,9 @@ class GenerateAdvancedItineraryTool(BaseTool):
                 days=itinerary_days,
                 budget=budget,
                 notes=[
-                    "All attractions sourced from OpenStreetMap via Geoapify.",
-                    "Transfer times are estimates based on straight-line distance (~45 km/h).",
-                    "Descriptions generated by Warik AI using verified place names.",
+                    "Place listings are sourced from Geoapify/OpenStreetMap; listings do not confirm visitor access or current operating status.",
+                    "Intercity road distances and journey times are not verified by this itinerary.",
+                    "Descriptions are conservative prompts to verify visitor details, not independently researched facts.",
                     *[
                         f"Hotel search issue: {failure}"
                         for failure in hotel_search_failures

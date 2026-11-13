@@ -773,9 +773,24 @@ async def handle_message(
 
                     if "days" in step.params:
                         try:
-                            step.params["days"] = int(step.params["days"])
+                            parsed_days = int(step.params["days"])
                         except (TypeError, ValueError):
-                            step.params["days"] = 3
+                            return AgentMessageResponse(
+                                reply=(
+                                    "I couldn't determine the trip duration. "
+                                    "How many days should the itinerary cover?"
+                                )
+                            )
+
+                        if parsed_days < 1 or parsed_days > 14:
+                            return AgentMessageResponse(
+                                reply=(
+                                    "Please specify a trip duration between "
+                                    "1 and 14 days."
+                                )
+                            )
+
+                        step.params["days"] = parsed_days
 
                 for key in ("check_in", "check_out", "date"):
                     if key in step.params and isinstance(step.params[key], str):

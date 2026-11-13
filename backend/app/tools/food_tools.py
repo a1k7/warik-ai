@@ -7,6 +7,7 @@ from typing import Optional
 from pydantic import BaseModel, Field
 from app.tools.base import BaseTool, ToolContext, ToolResult
 from app.core.config import settings
+from app.services.geospatial import geocoder, places_provider
 
 # ─── Canonical city → coordinates ───────────────────────────
 # If the input matches one of these exactly (case-insensitive),
@@ -31,36 +32,73 @@ KNOWN_CITIES = {
 
 
 def _geocode_location(location: str) -> Optional[dict]:
-    """Try known cities first. Fall back to Geoapify with strict validation."""
+    """Resolve a city using known coordinates, Geoapify, then Nominatim."""
     key = location.lower().strip()
     if key in KNOWN_CITIES:
         return KNOWN_CITIES[key]
 
-    if not settings.geoapify_api_key:
-        return None
+    if settings.geoapify_api_key:
+        try:
+            with httpx.Client(timeout=10.0) as client:
+                res = client.get(
+                    "https://api.geoapify.com/v1/geocode/search",
+                    params={
+                        "text": location,
+                        "limit": 1,
+                        "apiKey": settings.geoapify_api_key,
+                    },
+                )
+                res.raise_for_status()
+                data = res.json()
+
+            features = data.get("features") or []
+            if features:
+                props = features[0].get("properties") or {}
+                lat, lon = props.get("lat"), props.get("lon")
+                returned = (props.get("city") or "").strip()
+                if lat is not None and lon is not None:
+                    if not returned or (
+                        key in returned.lower() or returned.lower() in key
+                    ):
+                        return {
+                            "name": returned or location.title(),
+                            "lat": float(lat),
+                            "lon": float(lon),
+                            "country": props.get("country"),
+                        }
+        except Exception:
+            pass
+
     try:
-        with httpx.Client(timeout=10.0) as client:
-            res = client.get(
-                "https://api.geoapify.com/v1/geocode/search",
-                params={"text": location, "limit": 1, "apiKey": settings.geoapify_api_key},
-            )
-            res.raise_for_status()
-            data = res.json()
+        results = geocoder().search(location, limit=5)
     except Exception:
         return None
 
-    if not data.get("features"):
-        return None
-    props = data["features"][0]["properties"]
-    lat, lon = props.get("lat"), props.get("lon")
-    if lat is None or lon is None:
-        return None
-
-    returned = (props.get("city") or "").strip().lower()
-    if returned and location.lower() not in returned and returned not in location.lower():
-        return None
-    return {"name": props.get("city") or location.title(),
-            "lat": float(lat), "lon": float(lon), "country": props.get("country")}
+    allowed_types = {
+        "city", "town", "village", "municipality", "administrative"
+    }
+    for result in results or []:
+        if not isinstance(result, dict):
+            continue
+        place_type = str(
+            result.get("type") or result.get("addresstype") or ""
+        ).lower()
+        if place_type not in allowed_types:
+            continue
+        try:
+            lat = float(result["lat"])
+            lon = float(result["lon"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if not -90 <= lat <= 90 or not -180 <= lon <= 180:
+            continue
+        return {
+            "name": result.get("name") or location.title(),
+            "lat": lat,
+            "lon": lon,
+            "country": result.get("country"),
+        }
+    return None
 
 
 def _haversine_km(lat1, lon1, lat2, lon2):
@@ -107,44 +145,42 @@ class DiscoverFoodTool(BaseTool):
         city_lat = coords["lat"]
         city_lon = coords["lon"]
 
-        if not settings.geoapify_api_key:
-            return ToolResult(success=False, message="Geoapify API key missing.")
-
-        cat = "catering.cafe" if ("cafe" in params.query.lower() or "coffee" in params.query.lower()) else "catering.restaurant"
-
         try:
-            with httpx.Client(timeout=15.0) as client:
-                res = client.get(
-                    "https://api.geoapify.com/v2/places",
-                    params={
-                        "categories": cat,
-                        "filter": f"circle:{city_lon},{city_lat},15000",
-                        "limit": 30,
-                        "apiKey": settings.geoapify_api_key,
-                    },
-                )
-                res.raise_for_status()
-                data = res.json()
-        except Exception as e:
-            return ToolResult(success=False, message=f"Restaurant search failed: {e}")
+            places = places_provider().search(
+                {
+                    "name": city_name,
+                    "lat": city_lat,
+                    "lon": city_lon,
+                },
+                kind="restaurant",
+                limit=30,
+                radius_m=15000,
+            )
+        except Exception:
+            return ToolResult(
+                success=False,
+                message=(
+                    f"Restaurant discovery is temporarily unavailable in "
+                    f"{city_name}. Please try again shortly."
+                ),
+                data={
+                    "provider_status": "unavailable",
+                    "location": city_name,
+                },
+            )
 
         valid_places = []
         seen_names = set()
 
-        for feature in data.get("features", []):
-            props = feature.get("properties", {})
-            name = (props.get("name") or "").strip()
+        for place in places:
+            name = str(place.get("name") or "").strip()
             if len(name) < 3 or name.lower() in seen_names:
                 continue
 
-            # STRICT: reject places claiming a DIFFERENT city
-            place_city = (props.get("city") or "").strip().lower()
-            if place_city and place_city != city_name.lower():
-                continue
-
-            geo = feature.get("geometry", {}).get("coordinates", [None, None])
-            plon, plat = (geo[0], geo[1]) if len(geo) >= 2 else (None, None)
-            if plat is None or plon is None:
+            try:
+                plat = float(place["lat"])
+                plon = float(place["lon"])
+            except (KeyError, TypeError, ValueError):
                 continue
 
             dist_km = _haversine_km(city_lat, city_lon, plat, plon)
@@ -154,30 +190,62 @@ class DiscoverFoodTool(BaseTool):
             seen_names.add(name.lower())
             valid_places.append({
                 "name": name,
-                "address": props.get("address_line2") or props.get("formatted") or city_name,
+                "address": place.get("address") or city_name,
                 "lat": plat,
                 "lon": plon,
                 "distance_km": round(dist_km, 1),
-                "maps_url": f"https://www.openstreetmap.org/?mlat={plat}&mlon={plon}#map=16/{plat}/{plon}",
+                "maps_url": (
+                    f"https://www.openstreetmap.org/?mlat={plat}&mlon={plon}"
+                    f"#map=16/{plat}/{plon}"
+                ),
                 "zomato_url": f"https://www.zomato.com/search?q={quote(name)}",
                 "swiggy_url": f"https://www.swiggy.com/search?query={quote(name)}",
-                "category": (props.get("categories") or [cat])[0],
+                "category": place.get("category") or "restaurant",
+                "opening_hours": place.get("opening_hours"),
+                "dietary_tags": place.get("dietary_tags") or {},
+                "source": place.get("source") or "OpenStreetMap",
             })
+
+        valid_places.sort(key=lambda place: place["distance_km"])
 
         if not valid_places:
             return ToolResult(
                 success=True,
-                message=f"No verified restaurants found in {city_name}.",
-                data={"type": "food_list", "items": [], "search_context": {"location": city_name}},
+                message=(
+                    f"No OpenStreetMap restaurant listings were found in {city_name}. "
+                    "This does not establish that no restaurants are available."
+                ),
+                data={
+                    "type": "food_list",
+                    "items": [],
+                    "search_context": {
+                        "location": city_name,
+                        "query": params.query,
+                        "budget": params.budget,
+                        "source": "OpenStreetMap",
+                        "menu_prices_verified": False,
+                        "dietary_suitability_verified": False,
+                    },
+                },
             )
 
         valid_places.sort(key=lambda p: p["distance_km"])
 
         return ToolResult(
             success=True,
-            message=f"Found {len(valid_places)} restaurants in {city_name}.",
-            data={"type": "food_list", "items": valid_places[:5],
-                  "search_context": {"location": city_name, "query": params.query}},
+            message=f"Found {len(valid_places)} OpenStreetMap-listed places in {city_name}.",
+            data={
+                "type": "food_list",
+                "items": valid_places[:5],
+                "search_context": {
+                    "location": city_name,
+                    "query": params.query,
+                    "budget": params.budget,
+                    "source": "OpenStreetMap",
+                    "menu_prices_verified": False,
+                    "dietary_suitability_verified": False,
+                },
+            },
         )
 
 
