@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Sparkles, Plus, Mic, ArrowUp, Utensils, Coffee, Pizza, Map,
@@ -6,6 +6,7 @@ import {
   Wallet, CalendarDays, ChevronRight, Sun
 } from 'lucide-react';
 import { AIOrb } from './AIOrb';
+import { fetchCurrentUser } from './api';
 
 const prompts = [
   { text: 'Plan a weekend in Goa', icon: Plane, tag: 'TRAVEL' },
@@ -18,6 +19,26 @@ export const Home = () => {
   const navigate = useNavigate();
   const [command, setCommand] = useState('');
   const [menuOpen, setMenuOpen] = useState(false);
+  const [userName, setUserName] = useState('');
+
+  useEffect(() => {
+    let active = true;
+
+    fetchCurrentUser()
+      .then((user) => {
+        if (active) setUserName(user.name?.trim() || '');
+      })
+      .catch((error) => {
+        console.error('Unable to load authenticated user profile:', error);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const displayName = userName || 'there';
+  const avatarInitial = userName ? userName.charAt(0).toUpperCase() : '?';
 
   const submit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -46,14 +67,14 @@ export const Home = () => {
         <header className="home-topbar">
           <button className="mobile-menu" onClick={() => setMenuOpen(!menuOpen)}>{menuOpen ? <X/> : <Menu/>}</button>
           <div className="breadcrumb">Workspace <ChevronRight size={14}/> <strong>Home</strong></div>
-          <button className="profile-pill" onClick={() => navigate('/settings')}><span className="profile-avatar">A</span><span>Akhilesh</span></button>
+          <button className="profile-pill" onClick={() => navigate('/settings')}><span className="profile-avatar">{avatarInitial}</span><span>{displayName}</span></button>
         </header>
 
         <section className="home-content">
           <div className="home-greeting">
             <div className="greeting-copy">
               <span className="overline"><span className="online-dot"/> YOUR PERSONAL AI COMPANION</span>
-              <h1>Welcome,<br/><em>Akhilesh.</em></h1>
+              <h1>Welcome,<br/><em>{displayName}.</em></h1>
               <p>What would you like to make happen today?</p>
             </div>
             <div className="greeting-date">{new Date().toLocaleDateString('en-IN', { weekday: 'long', day: 'numeric', month: 'long' })}</div>

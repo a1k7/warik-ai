@@ -26,6 +26,16 @@ export const register = async (email: string, name: string, password: string) =>
   localStorage.setItem('warik_token', res.data.access_token);
   return res.data;
 };
+
+export interface CurrentUser {
+  id: number;
+  email: string;
+  name: string;
+  created_at: string;
+}
+
+export const fetchCurrentUser = async (): Promise<CurrentUser> =>
+  (await api.get<CurrentUser>('/auth/me')).data;
 export const saveFavoriteRestaurant = async (name: string, location: string) => (await api.post('/food/favorites', { name, location })).data;
 
 export const fetchConversations = async () => (await api.get('/conversations')).data;
