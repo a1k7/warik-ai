@@ -1,11 +1,11 @@
 import { NavLink, Outlet, useNavigate } from 'react-router-dom';
-import { Home, MessageCircle, CheckSquare, Bell, Wallet, Map, Bookmark, Settings, Compass, LogOut, Sparkles } from 'lucide-react';
+import { Home, MessageCircle, CheckSquare, Bell, Wallet, Map, Bookmark, Settings, Compass, LogOut, Sparkles, Utensils } from 'lucide-react';
 
 const links = [
   {to:'/', label:'Home', icon:Home}, {to:'/chat', label:'AI Assistant', icon:MessageCircle},
   {to:'/vision', label:'Explore', icon:Compass}, {to:'/tasks', label:'Tasks', icon:CheckSquare},
   {to:'/reminders', label:'Reminders', icon:Bell}, {to:'/expenses', label:'Expenses', icon:Wallet},
-  {to:'/travel', label:'Travel', icon:Map}, {to:'/saved', label:'Saved', icon:Bookmark},
+  {to:'/travel', label:'Travel', icon:Map}, {to:'/food', label:'Food', icon:Utensils}, {to:'/saved', label:'Saved', icon:Bookmark},
 ];
 export function AppShell() {
   const navigate = useNavigate();

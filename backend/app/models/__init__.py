@@ -21,3 +21,7 @@ __all__ = [
     "Message",
     "Document",
 ]
+
+from app.models.swiggy_connection import SwiggyConnection, SwiggyOAuthTransaction
+
+__all__ += ["SwiggyConnection", "SwiggyOAuthTransaction"]

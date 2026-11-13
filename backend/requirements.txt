@@ -16,3 +16,4 @@ beautifulsoup4>=4.12,<5
 lxml>=5,<7
 
 psycopg[binary]==3.3.8
+cryptography==44.0.2

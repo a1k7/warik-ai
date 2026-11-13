@@ -62,3 +62,18 @@ audio_cache/
 # Local credentials
 /token.json
 backend/token.json
+
+
+# Local archives and temporary backups
+*.zip
+*.bak
+*.backup*
+/backend/backup_*/
+/frontend-backup*/
+
+# Personal documents - never commit
+/backend/Akhilesh — VIT - VTOP REGISTRATION.pdf
+
+# Temporary frontend generator and pre-redesign snapshots
+/frontend/setup.py
+*.before-premium

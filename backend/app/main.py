@@ -22,6 +22,7 @@ from app.core.config import settings
 from app.database.base import Base
 from app.database.session import engine
 from app.api.documents import router as documents_router
+from app.api.integrations import router as integrations_router
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     Base.metadata.create_all(bind=engine)
@@ -58,6 +59,7 @@ app.include_router(conversations_router, prefix="/api")
 app.include_router(bookings_router, prefix="/api")
 app.include_router(workflows_router, prefix="/api")  # NEW
 app.include_router(documents_router, prefix="/api")
+app.include_router(integrations_router, prefix="/api")
 @app.get("/", tags=["root"])
 def root() -> dict[str, str]:
     return {

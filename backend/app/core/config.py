@@ -70,6 +70,33 @@ class Settings(BaseSettings):
     stayapi_key: str = ""
     reef_api_key: str = ""
 
+    # External commerce integrations. Disabled or mock by default.
+    swiggy_token_encryption_key: str = ""
+    swiggy_client_id: str = ""
+    swiggy_redirect_uri: str = "http://localhost:8000/api/integrations/swiggy/oauth/callback"
+    swiggy_frontend_return_url: str = "http://localhost:5173/settings"
+    swiggy_authorize_url: str = "https://mcp.swiggy.com/auth/authorize"
+    swiggy_token_url: str = "https://mcp.swiggy.com/auth/token"
+    swiggy_logout_url: str = "https://mcp.swiggy.com/auth/logout"
+    swiggy_oauth_scope: str = "mcp:tools"
+    swiggy_mode: str = "mock"
+    swiggy_food_mcp_url: str = "https://mcp.swiggy.com/food"
+    swiggy_instamart_mcp_url: str = "https://mcp.swiggy.com/im"
+    swiggy_dineout_mcp_url: str = "https://mcp.swiggy.com/dineout"
+    swiggy_scenes_mcp_url: str = "https://mcp.swiggy.com/scenes"
+
+    # Agoda: affiliate handoff only until approved partner access exists.
+    agoda_mode: str = "redirect_only"
+    agoda_affiliate_url: str = ""
+    agoda_affiliate_id: str = ""
+    agoda_api_key: str = ""
+
+    # Booking.com Demand API: disabled until partner access is approved.
+    booking_mode: str = "disabled"
+    booking_api_base_url: str = ""
+    booking_api_token: str = ""
+    booking_affiliate_id: str = ""
+
     @model_validator(mode="after")
     def validate_runtime_configuration(self):
         provider = self.llm_provider.strip().lower()

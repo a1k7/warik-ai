@@ -146,3 +146,135 @@ def test_orchestrator_uses_universal_planner_for_unmatched_request(db_session, m
     assert response.structured_data is not None
     assert response.structured_data["type"] == "workflow_status"
     assert response.structured_data["status"] == "COMPLETED"
+
+
+def test_optional_step_with_missing_parameters_is_skipped():
+    planner = _planner()
+
+    result = planner._build_plan(
+        {
+            "steps": [
+                {
+                    "id": "source",
+                    "tool": "list_tasks",
+                    "params": {},
+                    "required": True,
+                },
+                {
+                    "id": "optional_task",
+                    "tool": "create_task",
+                    "params": {},
+                    "depends_on": ["source"],
+                    "required": False,
+                },
+            ]
+        },
+        planner._capability_manifest(),
+    )
+
+    assert not isinstance(result, dict)
+    assert [step.id for step in result.steps] == ["source"]
+
+
+def test_optional_step_with_missing_bound_input_is_skipped():
+    planner = _planner()
+
+    result = planner._build_plan(
+        {
+            "steps": [
+                {
+                    "id": "source",
+                    "tool": "list_tasks",
+                    "params": {},
+                    "required": True,
+                },
+                {
+                    "id": "optional_task",
+                    "tool": "create_task",
+                    "params": {},
+                    "input_bindings": {
+                        "title": {
+                            "source_step": "source",
+                            "source_path": "items.0.title",
+                            "required": False,
+                        }
+                    },
+                    "depends_on": ["source"],
+                    "required": False,
+                },
+            ]
+        },
+        planner._capability_manifest(),
+    )
+
+    assert not isinstance(result, dict)
+    assert [step.id for step in result.steps] == ["source"]
+
+
+def test_required_step_depending_on_skipped_optional_step_requests_clarification():
+    planner = _planner()
+
+    result = planner._build_plan(
+        {
+            "steps": [
+                {
+                    "id": "optional_task",
+                    "tool": "create_task",
+                    "params": {},
+                    "required": False,
+                },
+                {
+                    "id": "dependent",
+                    "tool": "list_tasks",
+                    "params": {},
+                    "depends_on": ["optional_task"],
+                    "required": True,
+                },
+            ]
+        },
+        planner._capability_manifest(),
+    )
+
+    assert result["decision"] == "clarification"
+    assert "depends" in result["reply"]
+
+
+def test_optional_step_with_unknown_parameter_is_rejected():
+    planner = _planner()
+
+    result = planner._build_plan(
+        {
+            "steps": [
+                {
+                    "id": "optional_task",
+                    "tool": "create_task",
+                    "params": {"unexpected_field": "value"},
+                    "required": False,
+                }
+            ]
+        },
+        planner._capability_manifest(),
+    )
+
+    assert result["decision"] == "clarification"
+    assert "unexpected_field" in result["reply"]
+
+
+def test_optional_step_with_invalid_supplied_value_is_rejected():
+    planner = _planner()
+
+    result = planner._build_plan(
+        {
+            "steps": [
+                {
+                    "id": "optional_task",
+                    "tool": "create_task",
+                    "params": {"title": 12345},
+                    "required": False,
+                }
+            ]
+        },
+        planner._capability_manifest(),
+    )
+
+    assert result["decision"] == "clarification"

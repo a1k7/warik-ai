@@ -19,7 +19,8 @@ from typing import Optional
 
 from uuid import uuid4
 
-from sqlalchemy.orm import Session
+from sqlalchemy import update
+from sqlalchemy.orm import Session, object_session
 
 from app.models import User, Workflow, Goal
 
@@ -202,15 +203,87 @@ class WorkflowEngine:
 
         return workflow
 
-    def _steps(self, workflow: Workflow) -> list[dict]:
 
-        return workflow.steps_json or []
+
+
+    def _steps(self, workflow: Workflow) -> list[dict]:
+        """
+    Return a detached copy of workflow steps.
+
+    SQLAlchemy JSON columns do not automatically track nested mutations.
+    Deep-copying ensures changes are made independently and can be
+    persisted when assigned back through _save().
+    """
+        return deepcopy(workflow.steps_json or [])
+
 
     def _save(self, workflow: Workflow, steps: list[dict]) -> None:
-
-        workflow.steps_json = steps
-
+        """
+    Persist workflow steps by assigning a fresh JSON-compatible object.
+    """
+        workflow.steps_json = deepcopy(steps)
         workflow.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+    def _audit(
+        self,
+        action: str,
+        step: dict,
+        message: str,
+        workflow_id: int | None = None,
+    ) -> None:
+        """Persist a user-attributed workflow governance event."""
+        self.db.add(ActionLog(
+            user_id=self.user.id,
+            action=action,
+            tool_name=step.get("tool"),
+            payload={
+                "workflow_id": workflow_id,
+                "step_id": step.get("id"),
+                "status": step.get("status"),
+            },
+            result_status="success",
+            result_message=message[:1000],
+        ))
+
+    def _compare_and_swap_steps(
+        self,
+        workflow: Workflow,
+        old_steps: list[dict],
+        new_steps: list[dict],
+    ) -> bool:
+        """Persist a transition only if the stored workflow state is unchanged."""
+        if not isinstance(self.db, Session):
+            self._save(workflow, new_steps)
+            self.db.commit()
+            return True
+
+        session = object_session(workflow)
+        if session is None:
+            return False
+
+        result = session.execute(
+            update(Workflow)
+            .where(
+                Workflow.id == workflow.id,
+                Workflow.user_id == self.user.id,
+                Workflow.steps_json == old_steps,
+            )
+            .values(
+                steps_json=deepcopy(new_steps),
+                updated_at=datetime.now(timezone.utc).replace(tzinfo=None),
+            )
+            .execution_options(synchronize_session=False)
+        )
+
+        if result.rowcount != 1:
+            session.rollback()
+            session.refresh(workflow)
+            return False
+
+        session.commit()
+        session.refresh(workflow)
+        return True
 
     def _status_map(self, steps: list[dict]) -> dict[str, str]:
 
@@ -531,8 +604,14 @@ class WorkflowEngine:
 
                 blocked, reason = self._should_block(step, status_map)
                 if blocked:
-                    step["status"] = "BLOCKED"
-                    step["error"] = f"Blocked: {reason}"
+                    if step.get("required", True):
+                        step["status"] = "BLOCKED"
+                        step["error"] = f"Blocked: {reason}"
+                    else:
+                        step["status"] = "SKIPPED"
+                        step["error"] = f"Skipped optional step: {reason}"
+                    self._save(workflow, steps)
+                    self.db.commit()
                     continue
 
                 next_step = step
@@ -546,11 +625,19 @@ class WorkflowEngine:
             try:
                 params = self._inject_dependency_results(next_step, steps)
             except Exception as exc:
-                next_step["status"] = "FAILED"
-                next_step["error"] = (
-                    f"Input resolution failed: {str(exc)[:700]}"
-                )
-                new_failures.append(next_step)
+                if not next_step.get("required", True):
+                    next_step["status"] = "SKIPPED"
+                    next_step["error"] = (
+                        "Skipped optional step: dependency input resolution "
+                        f"was unavailable: {str(exc)[:700]}"
+                    )
+                else:
+                    next_step["status"] = "FAILED"
+                    next_step["error"] = (
+                        f"Input resolution failed: {str(exc)[:700]}"
+                    )
+                    new_failures.append(next_step)
+
                 self._save(workflow, steps)
                 self.db.commit()
                 continue
@@ -663,18 +750,44 @@ class WorkflowEngine:
                     self.db.commit()
                     break
 
+            # Atomically claim the step before any external side effect.
+            # A competing worker must not execute a step it failed to claim.
+            claim_snapshot = deepcopy(steps)
+
             next_step["status"] = "EXECUTING"
             next_step["started_at"] = _now_iso()
             next_step["execution_started_at"] = next_step["started_at"]
-            next_step["execution_id"] = (
-                next_step.get("execution_id") or str(uuid4())
-            )
+            next_step["execution_id"] = str(uuid4())
             next_step["execution_attempt"] = int(
                 next_step.get("execution_attempt", 0) or 0
             ) + 1
             next_step["checkpoint_version"] = 1
-            self._save(workflow, steps)
-            self.db.commit()
+            # Claim the EXECUTING transition atomically before any
+            # external side effect. Never invoke a tool if the claim was lost.
+            if not self._compare_and_swap_steps(
+                workflow, claim_snapshot, steps
+            ):
+                logger.info(
+                    "Execution claim lost for workflow %s step %s; "
+                    "another worker changed the workflow.",
+                    workflow.id,
+                    next_step.get("id"),
+                )
+                return {
+                    "executed": executed,
+                    "awaiting_approval": awaiting_approval,
+                    "new_failures": new_failures,
+                    "verified_steps": verified_steps,
+                    "unverified_steps": unverified_steps,
+                    "verification_failures": verification_failures,
+                    "reconciliation_required_steps": sorted(
+                        set(reconciliation_required_steps)
+                    ),
+                    "workflow_status": getattr(
+                        workflow, "status", "IN_PROGRESS"
+                    ),
+                    "concurrency_conflict": True,
+                }
 
             provider_attempts = next_step.setdefault("provider_attempts", [])
             failed_provider_ids = set()
@@ -1110,7 +1223,7 @@ class WorkflowEngine:
 
             step for step in optional
 
-            if step.get("status") in {"FAILED", "BLOCKED", "CANCELLED", "REJECTED", "SKIPPED"}
+            if step.get("status") in {"FAILED", "BLOCKED", "CANCELLED", "REJECTED"}
 
         ]
 
@@ -1145,69 +1258,64 @@ class WorkflowEngine:
         return "CANCELLED"
 
     def approve_step(self, workflow: Workflow, step_id: str) -> bool:
-
         steps = self._steps(workflow)
+        old_steps = deepcopy(steps)
+        target = next((step for step in steps if step.get("id") == step_id), None)
 
-        for step in steps:
+        if target is None or target.get("status") != "AWAITING_APPROVAL":
+            return False
 
-            if step.get("id") == step_id and step.get("status") == "AWAITING_APPROVAL":
+        target["approval_granted"] = True
+        target["status"] = "APPROVED"
 
-                step["approval_granted"] = True
+        if not self._compare_and_swap_steps(workflow, old_steps, steps):
+            return False
 
-                step["status"] = "APPROVED"
+        self._audit(
+            "workflow.step.approved",
+            target,
+            f"User approved workflow {workflow.id} step {step_id}.",
+            workflow.id,
+        )
+        self.db.commit()
+        return True
 
-                self._save(workflow, steps)
 
-                self.db.commit()
-
-                return True
-
-        return False
-
-    def reject_step(self, workflow: Workflow, step_id: str, reason: str = "Rejected by user") -> bool:
-
+    def reject_step(
+        self,
+        workflow: Workflow,
+        step_id: str,
+        reason: str = "Rejected by user",
+    ) -> bool:
         steps = self._steps(workflow)
+        old_steps = deepcopy(steps)
+        target = next((step for step in steps if step.get("id") == step_id), None)
 
-        for step in steps:
+        if target is None or target.get("status") != "AWAITING_APPROVAL":
+            return False
 
-            if step.get("id") == step_id and step.get("status") == "AWAITING_APPROVAL":
+        target["status"] = "REJECTED"
+        target["error"] = (reason or "Rejected by user")[:1000]
+        target["rejected_at"] = _now_iso()
 
-                step["status"] = "REJECTED"
+        if not self._compare_and_swap_steps(workflow, old_steps, steps):
+            return False
 
-                step["error"] = (reason or "Rejected by user")[:1000]
+        workflow.status = self._compute_overall_status(steps, None)
+        self._audit(
+            "workflow.step.rejected",
+            target,
+            f"User rejected workflow {workflow.id} step {step_id}.",
+            workflow.id,
+        )
+        self.db.commit()
+        return True
 
-                step["rejected_at"] = _now_iso()
-
-                self._save(workflow, steps)
-
-                self.db.add(ActionLog(
-
-                    user_id=self.user.id,
-
-                    action="workflow.step.rejected",
-
-                    tool_name=step.get("tool"),
-
-                    payload={"workflow_id": workflow.id, "step_id": step_id, "reason": step["error"]},
-
-                    result_status="rejected",
-
-                    result_message=step["error"],
-
-                ))
-
-                workflow.status = self._compute_overall_status(steps, None)
-
-                self.db.commit()
-
-                return True
-
-        return False
 
     def retry_step(self, workflow: Workflow, step_id: str) -> dict:
 
         steps = self._steps(workflow)
-
+        old_steps = deepcopy(steps)
         target = next((step for step in steps if step.get("id") == step_id), None)
 
         if target is None:
@@ -1215,21 +1323,18 @@ class WorkflowEngine:
             return {"ok": False, "reason": "Step not found"}
 
         if target.get("status") == "RECONCILIATION_REQUIRED":
-
             return {
-
                 "ok": False,
-
                 "reason": "Outcome is uncertain; reconcile the side effect before retrying",
-
             }
 
         if target.get("status") != "FAILED":
-
-            return {"ok": False, "reason": f"Step is {target.get('status')}, not FAILED"}
+            return {
+                "ok": False,
+                "reason": f"Step is {target.get('status')}, not FAILED",
+            }
 
         retries = int(target.get("retry_count", 0) or 0)
-
         max_retries = int(target.get("max_retries", 1) or 0)
 
         if retries >= max_retries:
@@ -1239,23 +1344,34 @@ class WorkflowEngine:
         target["status"] = "PENDING"
 
         target["error"] = None
-
         target["retry_count"] = retries + 1
+        target.pop("completed_at", None)
 
         target.pop("completed_at", None)
 
         for step in steps:
-
-            if step_id in step.get("depends_on", []) and step.get("status") == "BLOCKED":
-
+            if (
+                step_id in step.get("depends_on", [])
+                and step.get("status") == "BLOCKED"
+            ):
                 step["status"] = "PENDING"
 
                 step["error"] = None
 
+        if not self._compare_and_swap_steps(workflow, old_steps, steps):
+            return {
+                "ok": False,
+                "reason": "Workflow changed concurrently; reload and retry",
+            }
+
         workflow.status = "IN_PROGRESS"
-
-        self._save(workflow, steps)
-
+        self._audit(
+            "workflow.step.retried",
+            target,
+            f"User requested retry {target['retry_count']} for workflow "
+            f"{workflow.id} step {step_id}.",
+            workflow.id,
+        )
         self.db.commit()
 
         return {"ok": True, "retry_count": target["retry_count"]}

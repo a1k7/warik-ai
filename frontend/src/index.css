@@ -927,3 +927,130 @@ button { cursor: pointer; }
     min-height: 400px;
   }
 }
+
+/* INTEGRATION SETTINGS STYLES */
+.integration-provider {
+  padding-top: 19px;
+}
+
+.integration-provider-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.integration-provider-heading strong {
+  display: block;
+  font-size: 13px;
+  margin-bottom: 5px;
+}
+
+.integration-provider-heading small {
+  display: block;
+  color: var(--warik-muted);
+  font-size: 10px;
+}
+
+.integration-badge {
+  flex-shrink: 0;
+  padding: 6px 10px;
+  border-radius: 8px;
+  background: #f2edf8;
+  color: #79648f;
+  font-size: 9px;
+  font-weight: 700;
+}
+
+.integration-badge.connected {
+  background: #e7f7f0;
+  color: #319675;
+}
+
+.integration-description {
+  margin: 17px 0 12px;
+  color: var(--warik-muted);
+  font-size: 11px;
+  line-height: 1.7;
+}
+
+.integration-meta {
+  margin: 6px 0;
+  color: var(--warik-muted);
+  font-size: 10px;
+  overflow-wrap: anywhere;
+}
+
+.integration-actions {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin-top: 17px;
+}
+
+.integration-button,
+.integration-refresh {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 37px;
+  padding: 0 14px;
+  border-radius: 10px;
+  font-size: 10px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.integration-button.primary {
+  border: 1px solid var(--warik-accent);
+  background: var(--warik-accent);
+  color: white;
+}
+
+.integration-button.secondary {
+  border: 1px solid var(--warik-line);
+  background: var(--warik-bg);
+  color: var(--warik-ink);
+}
+
+.integration-refresh {
+  width: 37px;
+  padding: 0;
+  border: 1px solid var(--warik-line);
+  background: var(--warik-bg);
+  color: var(--warik-muted);
+}
+
+.integration-button:disabled,
+.integration-refresh:disabled {
+  opacity: .55;
+  cursor: not-allowed;
+}
+
+.integration-message {
+  margin: 13px 0 0;
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.integration-message.success {
+  color: #319675;
+}
+
+.integration-message.error {
+  color: #d15c67;
+}
+
+.integration-footnote {
+  margin: 13px 0 0;
+  color: var(--warik-muted);
+  font-size: 9px;
+  line-height: 1.6;
+}
+
+@media(max-width:700px) {
+  .integration-provider-heading {
+    align-items: flex-start;
+  }
+}

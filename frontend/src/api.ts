@@ -26,6 +26,16 @@ export const register = async (email: string, name: string, password: string) =>
   localStorage.setItem('warik_token', res.data.access_token);
   return res.data;
 };
+
+export interface CurrentUser {
+  id: number;
+  email: string;
+  name: string;
+  created_at: string;
+}
+
+export const fetchCurrentUser = async (): Promise<CurrentUser> =>
+  (await api.get<CurrentUser>('/auth/me')).data;
 export const saveFavoriteRestaurant = async (name: string, location: string) => (await api.post('/food/favorites', { name, location })).data;
 
 export const fetchConversations = async () => (await api.get('/conversations')).data;
@@ -98,4 +108,60 @@ export const travelApi = {
   create: async (payload: Record<string, unknown>) => (await api.post<TravelPlan>('/travel/', payload)).data,
   update: async (id:number, payload: Record<string, unknown>) => (await api.put<TravelPlan>(`/travel/${id}`, payload)).data,
   remove: async (id:number) => { await api.delete(`/travel/${id}`); },
+};
+
+
+export interface SwiggyAddress {
+  id: string;
+  addressCategory?: string;
+  addressLine?: string;
+}
+
+export interface SwiggyRestaurant {
+  id: string;
+  name: string;
+  cuisines?: string[];
+  avgRating?: number | string | null;
+  distanceKm?: number | string | null;
+  deliveryTimeMinutes?: number | null;
+}
+
+export const swiggyApi = {
+  addresses: async () =>
+    (await api.get<{is_mock: boolean; addresses: SwiggyAddress[]}>(
+      '/integrations/swiggy/addresses'
+    )).data,
+  search: async (query: string, addressId: string) =>
+    (await api.post<{
+      is_mock: boolean;
+      restaurants: SwiggyRestaurant[];
+      notice?: string;
+    }>('/integrations/swiggy/restaurants/search', null, {
+      params: {query, address_id: addressId}
+    })).data,
+};
+
+// Swiggy account connection and OAuth operations
+export interface SwiggyConnectionStatus {
+  connected: boolean;
+  status: string;
+  expires_at?: string;
+  scope?: string;
+}
+
+export const swiggyIntegrationApi = {
+  status: async () =>
+    (await api.get<SwiggyConnectionStatus>(
+      '/integrations/swiggy/status'
+    )).data,
+
+  startOAuth: async () =>
+    (await api.post<{ authorization_url: string }>(
+      '/integrations/swiggy/oauth/start'
+    )).data,
+
+  disconnect: async () =>
+    (await api.delete<{ connected: boolean; status: string }>(
+      '/integrations/swiggy'
+    )).data,
 };

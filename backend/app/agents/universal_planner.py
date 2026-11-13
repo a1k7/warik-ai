@@ -156,11 +156,16 @@ class UniversalTaskPlanner:
         return None
 
     @staticmethod
-    def _validate_partial_params(tool, params: dict, bindings: dict) -> dict:
-        """Validate supplied values while allowing required fields supplied by bindings.
+    def _validate_partial_params(
+        tool,
+        params: dict,
+        bindings: dict,
+        *,
+        allow_missing: bool = False,
+    ) -> dict:
+        """Validate supplied values and optionally defer missing-field validation.
 
         Full model validation is repeated by the executor after bindings are resolved.
-        Here we validate field names/types and ensure no required field is left unset.
         """
         fields = tool.input_schema.model_fields
         unknown = sorted(set(params) - set(fields))
@@ -182,7 +187,7 @@ class UniversalTaskPlanner:
                 and (name not in bindings or not bindings[name].required)
             )
         ]
-        if missing:
+        if missing and not allow_missing:
             raise ValueError(f"missing required parameter(s): {', '.join(missing)}")
         return params
 
@@ -198,6 +203,7 @@ class UniversalTaskPlanner:
 
         manifest_by_name = {item["name"]: item for item in manifest}
         normalized_steps: list[dict] = []
+        skipped_step_ids: set[str] = set()
 
         for index, raw_step in enumerate(raw_steps, start=1):
             if not isinstance(raw_step, dict):
@@ -220,13 +226,70 @@ class UniversalTaskPlanner:
                 return self._clarification(f"The parameters or input bindings for '{tool_name}' were not valid. Please clarify the request.")
 
             tool = self.registry.get(tool_name)
+            step_required = bool(raw_step.get("required", True))
+
             try:
                 bindings = {
                     str(target): WorkflowInputBinding.model_validate(binding)
                     for target, binding in raw_bindings.items()
                 }
+
+                fields = tool.input_schema.model_fields
+                unknown_binding_targets = sorted(set(bindings) - set(fields))
+                if unknown_binding_targets:
+                    raise ValueError(
+                        "unknown input binding target(s): "
+                        + ", ".join(unknown_binding_targets)
+                    )
+
+                duplicate_targets = sorted(set(bindings) & set(params))
+                if duplicate_targets:
+                    raise ValueError(
+                        "parameter(s) supplied both directly and by binding: "
+                        + ", ".join(duplicate_targets)
+                    )
+
+                # Validate all supplied parameter names and values before
+                # deciding whether missing inputs permit skipping an optional step.
+                self._validate_partial_params(
+                    tool,
+                    params,
+                    bindings,
+                    allow_missing=True,
+                )
+
+                missing_required = [
+                    name
+                    for name, field in fields.items()
+                    if (
+                        field.is_required()
+                        and name not in params
+                        and (
+                            name not in bindings
+                            or not bindings[name].required
+                        )
+                    )
+                ]
+
+                if missing_required and not step_required:
+                    skipped_id = str(raw_step.get("id") or f"step_{index}")
+                    skipped_step_ids.add(skipped_id)
+                    logger.info(
+                        "Skipping optional workflow step %s (%s); "
+                        "missing required inputs: %s",
+                        skipped_id,
+                        tool_name,
+                        ", ".join(sorted(missing_required)),
+                    )
+                    continue
+
+                if missing_required:
+                    raise ValueError(
+                        "missing required parameter(s): "
+                        + ", ".join(sorted(missing_required))
+                    )
+
                 if bindings:
-                    self._validate_partial_params(tool, params, bindings)
                     validated_params = dict(params)
                 else:
                     validated_params = tool.input_schema(**params).model_dump(mode="json")
@@ -247,6 +310,11 @@ class UniversalTaskPlanner:
                         f"Please provide the required parameter(s) "
                         f"for '{tool_name}': {fields}."
                     )
+                elif isinstance(exc, ValueError):
+                    message = (
+                        f"I couldn't validate the details for '{tool_name}': "
+                        f"{exc}. Please correct the supplied inputs."
+                    )
                 else:
                     message = (
                         f"I couldn't validate the details for '{tool_name}'. "
@@ -265,13 +333,54 @@ class UniversalTaskPlanner:
                 "approval_required": bool(raw_step.get("approval_required"))
                     or bool(capability.get("requires_confirmation"))
                     or bool(capability.get("is_mutating")),
-                "required": bool(raw_step.get("required", True)),
+                "required": step_required,
                 "dep_policy": raw_step.get("dep_policy", "all_success"),
                 "max_retries": raw_step.get("max_retries", 1),
             }
             if not isinstance(step["depends_on"], list) or not all(isinstance(dep, str) for dep in step["depends_on"]):
                 return self._clarification(f"The dependencies for '{tool_name}' are malformed. Please try again.")
             normalized_steps.append(step)
+
+        # Remove optional steps that depend on steps already skipped.
+        # A required dependent step cannot safely proceed and needs clarification.
+        changed = True
+        while changed:
+            changed = False
+            retained_steps = []
+
+            for step in normalized_steps:
+                skipped_dependencies = (
+                    set(step.get("depends_on") or []) & skipped_step_ids
+                )
+
+                if not skipped_dependencies:
+                    retained_steps.append(step)
+                    continue
+
+                if step["required"]:
+                    dependencies = ", ".join(sorted(skipped_dependencies))
+                    return self._clarification(
+                        f"The required step '{step['id']}' depends on an "
+                        f"optional step that cannot run ({dependencies}). "
+                        "Please clarify how you want to proceed."
+                    )
+
+                skipped_step_ids.add(step["id"])
+                changed = True
+                logger.info(
+                    "Skipping optional workflow step %s because a dependency "
+                    "was skipped.",
+                    step["id"],
+                )
+
+            normalized_steps = retained_steps
+
+        if not normalized_steps:
+            return self._clarification(
+                "I couldn't build an executable workflow because all proposed "
+                "actions were optional and lacked required inputs. "
+                "Please clarify the action you want me to perform."
+            )
 
         dependency_error = self._validate_dependencies(normalized_steps)
         if dependency_error:
