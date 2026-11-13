@@ -19,7 +19,8 @@ from typing import Optional
 
 from uuid import uuid4
 
-from sqlalchemy import update
+from sqlalchemy import cast, update
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Session, object_session
 
 from app.models import User, Workflow, Goal
@@ -34,6 +35,18 @@ from app.tools.registry import registry
 from app.tools.provider_selector import ProviderSelector
 
 logger = logging.getLogger(__name__)
+
+
+def _workflow_steps_match_condition(session: Session, old_steps: list[dict]):
+    """Build a dialect-safe workflow snapshot comparison for CAS."""
+    if session.get_bind().dialect.name == "postgresql":
+        return (
+            cast(Workflow.steps_json, JSONB)
+            == cast(old_steps, JSONB)
+        )
+
+    return Workflow.steps_json == old_steps
+
 
 # Long-running tools may legitimately remain active. Only recover an EXECUTING
 
@@ -267,7 +280,7 @@ class WorkflowEngine:
             .where(
                 Workflow.id == workflow.id,
                 Workflow.user_id == self.user.id,
-                Workflow.steps_json == old_steps,
+                _workflow_steps_match_condition(session, old_steps),
             )
             .values(
                 steps_json=deepcopy(new_steps),
