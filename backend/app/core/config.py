@@ -63,6 +63,7 @@ class Settings(BaseSettings):
     geo_timeout_seconds: float = Field(default=12.0, gt=0, le=60)
     overpass_timeout_seconds: float = Field(default=25.0, gt=0, le=90)
     nominatim_min_interval_seconds: float = Field(default=1.1, ge=1.0, le=10.0)
+    airport_search_radius_m: int = Field(default=50000, gt=0, le=100000)
 
     # Legacy optional provider key retained for backward compatibility.
     geoapify_api_key: str = ""

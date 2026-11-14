@@ -7,6 +7,7 @@ caching, input validation, and the existing Warik AI place-record schema.
 from __future__ import annotations
 
 import logging
+import re
 import time
 from typing import Any
 
@@ -163,12 +164,9 @@ class OverpassProvider:
                 logger.warning(
                     "Overpass endpoint returned HTTP %s: %s", status, endpoint
                 )
-            except (httpx.TransportError, RuntimeError) as exc:
+            except (httpx.TransportError, RuntimeError, ValueError) as exc:
                 last_error = exc
                 logger.warning("Overpass request failed at %s: %s", endpoint, exc)
-
-            if attempt + 1 < total_attempts:
-                time.sleep(2**attempt)
 
         if last_error is not None:
             raise last_error
@@ -336,5 +334,162 @@ class OverpassProvider:
         )
         payload = self._request(query)
         results = self._parse_results(payload, location, limit)
+        self._cache_put(cache_key, results)
+        return results
+
+
+    def search_airports(
+        self,
+        location: dict,
+        *,
+        limit: int = 100,
+        radius_m: int = 50000,
+    ) -> list[dict]:
+        """Discover nearby airports from OpenStreetMap records."""
+        if not isinstance(limit, int) or isinstance(limit, bool):
+            raise ValueError("limit must be an integer.")
+        if not 1 <= limit <= 100:
+            raise ValueError("limit must be between 1 and 100.")
+        if not isinstance(radius_m, int) or isinstance(radius_m, bool):
+            raise ValueError("radius_m must be an integer.")
+        if not 100 <= radius_m <= 100000:
+            raise ValueError("radius_m must be between 100 and 100000 metres.")
+
+        lat, lon = self._validate_location(location)
+        cache_key = (
+            "airport",
+            round(lat, 5),
+            round(lon, 5),
+            limit,
+            radius_m,
+        )
+
+        cached = self._cache_get(cache_key)
+        if cached is not None:
+            return cached
+
+        query = self._build_query(
+            lat=lat,
+            lon=lon,
+            filters=('nwr["aeroway"="aerodrome"]',),
+            limit=limit,
+            radius_m=radius_m,
+            query_timeout=self.query_timeout,
+        )
+
+        payload = self._request(query)
+        results = []
+        seen = set()
+
+        for element in payload.get("elements", []):
+            tags = element.get("tags") or {}
+            center = element.get("center") or {}
+
+            try:
+                airport_lat = float(element.get("lat", center.get("lat")))
+                airport_lon = float(element.get("lon", center.get("lon")))
+            except (TypeError, ValueError):
+                continue
+
+            if not -90 <= airport_lat <= 90:
+                continue
+            if not -180 <= airport_lon <= 180:
+                continue
+
+            identity = (element.get("type"), element.get("id"))
+            if identity in seen:
+                continue
+            seen.add(identity)
+
+            results.append({
+                "name": str(
+                    tags.get("name")
+                    or tags.get("name:en")
+                    or tags.get("iata")
+                    or "Unnamed airport"
+                ).strip(),
+                "iata": str(tags.get("iata") or "").strip().upper(),
+                "icao": str(tags.get("icao") or "").strip().upper(),
+                "lat": airport_lat,
+                "lon": airport_lon,
+                "source": "OpenStreetMap",
+                "osm_type": element.get("type"),
+                "osm_id": element.get("id"),
+            })
+
+        self._cache_put(cache_key, results)
+        return results
+
+    def search_airports_by_iata(
+        self,
+        iata: str,
+        *,
+        limit: int = 10,
+    ) -> list[dict]:
+        """Find airport records with an exact IATA tag."""
+        code = str(iata or "").strip().upper()
+
+        if not re.fullmatch(r"[A-Z]{3}", code):
+            raise ValueError("A valid three-letter IATA code is required.")
+        if not isinstance(limit, int) or isinstance(limit, bool):
+            raise ValueError("limit must be an integer.")
+        if not 1 <= limit <= 100:
+            raise ValueError("limit must be between 1 and 100.")
+
+        cache_key = ("airport_iata", code, limit)
+        cached = self._cache_get(cache_key)
+        if cached is not None:
+            return cached
+
+        query = (
+            f'[out:json][timeout:{self.query_timeout}];\n'
+            f'(nwr["aeroway"="aerodrome"]["iata"="{code}"];);\n'
+            f'out center tags {limit};'
+        )
+
+        payload = self._request(query)
+        results = []
+        seen = set()
+
+        for element in payload.get("elements", []):
+            tags = element.get("tags") or {}
+            record_code = str(tags.get("iata") or "").strip().upper()
+
+            if record_code != code:
+                continue
+
+            center = element.get("center") or {}
+            try:
+                lat = float(element.get("lat", center.get("lat")))
+                lon = float(element.get("lon", center.get("lon")))
+            except (TypeError, ValueError):
+                continue
+
+            if not -90 <= lat <= 90 or not -180 <= lon <= 180:
+                continue
+
+            identity = (element.get("type"), element.get("id"))
+            if identity in seen:
+                continue
+            seen.add(identity)
+
+            results.append({
+                "name": str(
+                    tags.get("name")
+                    or tags.get("name:en")
+                    or "Unnamed airport"
+                ).strip(),
+                "iata": record_code,
+                "icao": str(tags.get("icao") or "").strip().upper(),
+                "lat": lat,
+                "lon": lon,
+                "source": "OpenStreetMap",
+                "osm_type": element.get("type"),
+                "osm_id": element.get("id"),
+            })
+
+            if len(results) >= limit:
+                break
+
         self._cache_put(cache_key, results)
         return results

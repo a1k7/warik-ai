@@ -134,6 +134,14 @@ export interface StructuredData {
     | 'cab_handoff'
     | 'advanced_itinerary';
   items?: (HotelItem | FlightItem | FoodItem)[];
+  search_url?: string;
+  live_inventory?: boolean;
+  resolution_status?: string;
+  provider_error?: string;
+  origin_airport?: Record<string, any>;
+  destination_airport?: Record<string, any>;
+  origin_airport_candidates?: Record<string, any>[];
+  destination_airport_candidates?: Record<string, any>[];
   city?: string;
   search_context?: any;
   // advanced_itinerary fields

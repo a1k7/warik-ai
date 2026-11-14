@@ -82,52 +82,205 @@ const ResultCards = ({ data }: { data: any }) => {
     );
   }
 
+
   if (data.type === 'hotel_list') {
+    const items = Array.isArray(data.items) ? data.items : [];
+
     return (
       <div className="flex flex-col gap-4 mt-4 w-full">
-        {data.items.map((item: any, idx: number) => (
-          <div key={idx} className="bg-jcard border border-jprimary/30 rounded-2xl overflow-hidden flex flex-col shadow-lg w-full">
-            <div className="p-4 flex flex-col gap-2">
-              <div className="flex justify-between items-start">
+        {data.live_inventory === false && (
+          <div className="bg-jcard border border-jprimary/30 rounded-xl p-4">
+            <div className="flex items-center gap-2 text-jsecondary text-sm font-bold">
+              <Building2 size={16} />
+              Live hotel inventory unavailable
+            </div>
+            <p className="text-xs text-jmuted mt-2">
+              Current hotel availability and prices need to be checked with the booking provider.
+            </p>
+          </div>
+        )}
+
+        {items.length > 0 ? (
+          items.map((item: any, idx: number) => (
+            <div
+              key={idx}
+              className="bg-jcard border border-jprimary/30 rounded-2xl overflow-hidden flex flex-col shadow-lg w-full"
+            >
+              <div className="p-4 flex flex-col gap-2">
                 <h3 className="font-bold text-white text-base">{item.name}</h3>
-              </div>
-              <p className="text-xs text-jmuted flex items-start gap-1"><MapPin size={14} /><span>{item.address}</span></p>
-              <div className="flex justify-between items-center mt-2 pt-3 border-t border-jmuted/10">
-                <span className="text-sm font-bold text-jsecondary">{item.price_per_night || item.price} <span className="text-xs text-jmuted font-normal">/ night</span></span>
-                <a href={item.booking_url} target="_blank" rel="noopener noreferrer" className="text-xs font-bold text-white bg-jprimary hover:bg-jsecondary px-4 py-2 rounded-lg transition-colors flex items-center gap-2">
-                  Book Now <ExternalLink size={12} />
-                </a>
+                {item.address && (
+                  <p className="text-xs text-jmuted flex items-start gap-1">
+                    <MapPin size={14} />
+                    <span>{item.address}</span>
+                  </p>
+                )}
+                <div className="flex justify-between items-center mt-2 pt-3 border-t border-jmuted/10">
+                  <span className="text-sm font-bold text-jsecondary">
+                    {item.price_per_night || item.price || 'Price unavailable'}
+                    <span className="text-xs text-jmuted font-normal"> / night</span>
+                  </span>
+                  {item.booking_url && (
+                    <a
+                      href={item.booking_url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-xs font-bold text-white bg-jprimary hover:bg-jsecondary px-4 py-2 rounded-lg transition-colors flex items-center gap-2"
+                    >
+                      Book Now <ExternalLink size={12} />
+                    </a>
+                  )}
+                </div>
+                {item.total_stay && (
+                  <p className="text-xs text-jmuted">
+                    Total stay: {item.total_stay}
+                  </p>
+                )}
               </div>
             </div>
+          ))
+        ) : (
+          <div className="bg-jcard border border-jmuted/20 rounded-xl p-4">
+            <p className="text-sm text-white font-semibold">
+              No live hotel results are available.
+            </p>
+            <p className="text-xs text-jmuted mt-1">
+              Use the external search to check current availability and prices.
+            </p>
           </div>
-        ))}
+        )}
+
+        {data.search_url && (
+          <a
+            href={data.search_url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex items-center justify-center gap-2 rounded-xl bg-jprimary hover:bg-jsecondary text-white font-bold text-sm px-4 py-3 transition-colors"
+          >
+            Search hotels and prices <ExternalLink size={14} />
+          </a>
+        )}
       </div>
     );
   }
 
   if (data.type === 'flight_list') {
+    const items = Array.isArray(data.items) ? data.items : [];
+    const originAirport =
+      data.origin_airport || data.origin_airport_candidates?.[0];
+    const destinationAirport =
+      data.destination_airport || data.destination_airport_candidates?.[0];
+
     return (
       <div className="flex flex-col gap-3 mt-4 w-full">
-        {data.items.map((item: any, idx: number) => (
-          <div key={idx} className="bg-jcard border border-jmuted/20 rounded-xl p-4 flex flex-col gap-2 w-full">
-            <div className="flex justify-between items-center">
-              <h4 className="font-bold text-white text-sm flex items-center gap-2"><Plane size={16} className="text-jprimary" /> {item.segments?.[0]?.airline || 'Flight'}</h4>
-              <span className="text-xs font-bold text-jsecondary bg-jprimary/10 px-2 py-1 rounded">{item.price}</span>
-            </div>
-            <div className="flex flex-col gap-2">
-              {item.segments?.map((seg: any, i: number) => (
-                <div key={i} className="flex justify-between text-xs text-jmuted mt-1">
-                  <span>{seg.departure}</span><span>→</span><span>{seg.arrival}</span>
-                </div>
-              ))}
-            </div>
-            <div className="flex justify-between items-center mt-2 pt-2 border-t border-jmuted/10">
-              <a href={item.url} target="_blank" rel="noopener noreferrer" className="text-xs font-bold text-white bg-jprimary hover:bg-jsecondary px-3 py-1.5 rounded flex items-center gap-2">
-                Book Flight <ExternalLink size={12} />
-              </a>
+        {(originAirport || destinationAirport) && (
+          <div className="bg-jcard border border-jprimary/30 rounded-xl p-3">
+            <p className="text-[10px] uppercase tracking-wider text-jmuted mb-2">
+              Resolved airports
+            </p>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <p className="text-xs text-jmuted">Departure</p>
+                <p className="text-sm font-bold text-white">
+                  {originAirport?.iata || '—'}
+                </p>
+                <p className="text-xs text-jsecondary">
+                  {originAirport?.name || 'Airport unavailable'}
+                </p>
+              </div>
+              <div>
+                <p className="text-xs text-jmuted">Destination</p>
+                <p className="text-sm font-bold text-white">
+                  {destinationAirport?.iata || '—'}
+                </p>
+                <p className="text-xs text-jsecondary">
+                  {destinationAirport?.name || 'Airport unavailable'}
+                </p>
+              </div>
             </div>
           </div>
-        ))}
+        )}
+
+        {data.live_inventory === false && (
+          <div className="bg-jcard border border-jprimary/30 rounded-xl p-4">
+            <div className="flex items-center gap-2 text-jsecondary text-sm font-bold">
+              <Plane size={16} />
+              Live flight inventory unavailable
+            </div>
+            <p className="text-xs text-jmuted mt-2">
+              No live schedules or prices have been verified by this search.
+            </p>
+          </div>
+        )}
+
+        {items.length > 0 ? (
+          items.map((item: any, idx: number) => (
+            <div
+              key={idx}
+              className="bg-jcard border border-jmuted/20 rounded-xl p-4 flex flex-col gap-2 w-full"
+            >
+              <div className="flex justify-between items-center">
+                <h4 className="font-bold text-white text-sm flex items-center gap-2">
+                  <Plane size={16} className="text-jprimary" />
+                  {item.segments?.[0]?.airline || 'Flight'}
+                </h4>
+                <span className="text-xs font-bold text-jsecondary bg-jprimary/10 px-2 py-1 rounded">
+                  {item.price || 'Price unavailable'}
+                </span>
+              </div>
+
+              <div className="flex flex-col gap-2">
+                {item.segments?.map((seg: any, i: number) => (
+                  <div
+                    key={i}
+                    className="flex justify-between text-xs text-jmuted mt-1"
+                  >
+                    <span>{seg.origin} {seg.departure}</span>
+                    <span>→</span>
+                    <span>{seg.destination} {seg.arrival}</span>
+                  </div>
+                ))}
+              </div>
+
+              <div className="flex justify-between items-center mt-2 pt-2 border-t border-jmuted/10">
+                {item.url && (
+                  <a
+                    href={item.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-xs font-bold text-white bg-jprimary hover:bg-jsecondary px-3 py-1.5 rounded flex items-center gap-2"
+                  >
+                    Book Flight <ExternalLink size={12} />
+                  </a>
+                )}
+                {typeof item.stops === 'number' && (
+                  <span className="text-xs text-jmuted">
+                    {item.stops === 0 ? 'Non-stop' : `${item.stops} stop(s)`}
+                  </span>
+                )}
+              </div>
+            </div>
+          ))
+        ) : (
+          <div className="bg-jcard border border-jmuted/20 rounded-xl p-4">
+            <p className="text-sm text-white font-semibold">
+              No live flight options are available.
+            </p>
+            <p className="text-xs text-jmuted mt-1">
+              Search externally for current routes, schedules and fares.
+            </p>
+          </div>
+        )}
+
+        {data.search_url && (
+          <a
+            href={data.search_url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex items-center justify-center gap-2 rounded-xl bg-jprimary hover:bg-jsecondary text-white font-bold text-sm px-4 py-3 transition-colors"
+          >
+            Search flights and prices <ExternalLink size={14} />
+          </a>
+        )}
       </div>
     );
   }
