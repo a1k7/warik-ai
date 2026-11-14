@@ -251,3 +251,82 @@ def test_overpass_preserves_all_explicit_dietary_tags():
         "diet:vegan": "only",
         "diet:custom-tag": "limited",
     }
+
+
+def test_overpass_uses_only_configured_attempt_limit(monkeypatch):
+    import httpx
+    from app.services.places.overpass import OverpassProvider
+
+    calls = []
+
+    def handler(request):
+        calls.append(str(request.url))
+        raise httpx.ConnectError("network unavailable")
+
+    provider = OverpassProvider(
+        endpoint="https://primary.example/api",
+        fallback_endpoints=(
+            "https://fallback.example/api",
+            "https://third.example/api",
+        ),
+        timeout=1,
+        max_retries=1,
+    )
+
+    real_client = httpx.Client
+    transport = httpx.MockTransport(handler)
+
+    monkeypatch.setattr(
+        httpx,
+        "Client",
+        lambda **kwargs: real_client(
+            transport=transport,
+            **kwargs,
+        ),
+    )
+
+    import pytest
+    with pytest.raises(httpx.ConnectError):
+        provider._request("[out:json];out;")
+
+    assert calls == [
+        "https://primary.example/api",
+        "https://fallback.example/api",
+    ]
+
+
+def test_overpass_falls_back_after_invalid_json(monkeypatch):
+    import httpx
+    from app.services.places.overpass import OverpassProvider
+
+    calls = []
+
+    def handler(request):
+        calls.append(str(request.url))
+        if len(calls) == 1:
+            return httpx.Response(200, text="not-json")
+        return httpx.Response(200, json={"elements": []})
+
+    provider = OverpassProvider(
+        endpoint="https://primary.example/api",
+        fallback_endpoints=("https://fallback.example/api",),
+        timeout=1,
+        max_retries=1,
+    )
+
+    real_client = httpx.Client
+    transport = httpx.MockTransport(handler)
+
+    monkeypatch.setattr(
+        httpx,
+        "Client",
+        lambda **kwargs: real_client(
+            transport=transport,
+            **kwargs,
+        ),
+    )
+
+    result = provider._request("[out:json];out;")
+
+    assert result == {"elements": []}
+    assert len(calls) == 2

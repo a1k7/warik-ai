@@ -4,6 +4,7 @@
 import httpx
 import json
 import subprocess
+import shutil
 import re
 import math
 
@@ -15,57 +16,122 @@ from pydantic import BaseModel, Field
 
 from app.tools.base import BaseTool, ToolContext, ToolResult
 from app.core.config import settings
+from app.services.geospatial import geocoder, places_provider
 
 
-CITY_TO_IATA = {
-    "MUMBAI": "BOM",
-    "BOMBAY": "BOM",
-    "NEW DELHI": "DEL",
-    "DELHI": "DEL",
-    "BANGALORE": "BLR",
-    "BENGALURU": "BLR",
-    "JAIPUR": "JAI",
-    "KOLKATA": "CCU",
-    "CHENNAI": "MAA",
-    "GOA": "GOI",
-    "PANAJI": "GOI",
-    "HYDERABAD": "HYD",
-    "PUNE": "PNQ",
-    "AHMEDABAD": "AMD",
-    "KOCHI": "COK",
-    "LUCKNOW": "LKO",
-    "CHANDIGARH": "IXC",
-    "AGRA": "AGR",
-    "VARANASI": "VNS",
-    "AMRITSAR": "ATQ",
-}
+
+class AirportResolutionError(RuntimeError):
+    """Raised when a provider prevents airport resolution."""
 
 
-STATE_TO_CLI_CITY = {
-    "goa": "Panaji",
-    "kerala": "Kochi",
-    "rajasthan": "Jaipur",
-    "west bengal": "Kolkata",
-    "maharashtra": "Mumbai",
-    "punjab": "Amritsar",
-    "tamil nadu": "Chennai",
-    "karnataka": "Bangalore",
-    "uttar pradesh": "Lucknow",
-    "himachal pradesh": "Shimla",
-    "delhi": "New Delhi",
-}
-
-
-def get_iata(city: str) -> str:
-    if not isinstance(city, str):
+def get_iata(value: str) -> str:
+    """Recognize the syntax of an explicitly supplied IATA code."""
+    if not isinstance(value, str):
         return ""
-
-    normalized = city.upper().strip()
-    return CITY_TO_IATA.get(normalized, normalized)
+    normalized = value.strip().upper()
+    return normalized if re.fullmatch(r"[A-Z]{3}", normalized) else ""
 
 
 def normalize_cli_city(city: str) -> str:
-    return STATE_TO_CLI_CITY.get(city.lower().strip(), city)
+    """Preserve the user's original location text."""
+    return city.strip() if isinstance(city, str) else ""
+
+
+def resolve_airport_candidates(
+    location: str,
+    limit: int = 5,
+) -> list[dict]:
+    """Resolve arbitrary locations to nearby provider-recorded airports."""
+    if not isinstance(location, str) or not location.strip():
+        return []
+
+    if not isinstance(limit, int) or isinstance(limit, bool) or limit < 1:
+        raise ValueError("limit must be a positive integer.")
+
+    try:
+        provider = places_provider()
+
+        # A three-letter input is only a possible IATA code.
+        # Verify it against an actual airport record before accepting it.
+        explicit_code = get_iata(location)
+        if explicit_code:
+            records = provider.search_airports_by_iata(
+                explicit_code,
+                limit=10,
+            )
+            return [
+                {
+                    **record,
+                    "distance_km": 0.0,
+                    "source": record.get("source", "OpenStreetMap"),
+                }
+                for record in records
+                if str(record.get("iata") or "").upper() == explicit_code
+            ][:limit]
+
+        # Multiple geocoding results help with ambiguous place names.
+        locations = geocoder().search(location.strip(), limit=5)
+
+        if not locations:
+            return []
+
+        candidates_by_code = {}
+
+        for resolved_location in locations:
+            try:
+                latitude = float(resolved_location["lat"])
+                longitude = float(resolved_location["lon"])
+            except (KeyError, TypeError, ValueError):
+                continue
+
+            airports = provider.search_airports(
+                resolved_location,
+                limit=100,
+                radius_m=settings.airport_search_radius_m,
+            )
+
+            for airport in airports:
+                code = str(airport.get("iata") or "").strip().upper()
+
+                if not re.fullmatch(r"[A-Z]{3}", code):
+                    continue
+
+                try:
+                    distance = haversine_km(
+                        latitude,
+                        longitude,
+                        float(airport["lat"]),
+                        float(airport["lon"]),
+                    )
+                except (KeyError, TypeError, ValueError):
+                    continue
+
+                candidate = {
+                    **airport,
+                    "iata": code,
+                    "distance_km": round(distance, 2),
+                    "matched_location": resolved_location.get(
+                        "display_name",
+                        resolved_location.get("name", location),
+                    ),
+                }
+
+                existing = candidates_by_code.get(code)
+                if (
+                    existing is None
+                    or candidate["distance_km"] < existing["distance_km"]
+                ):
+                    candidates_by_code[code] = candidate
+
+        return sorted(
+            candidates_by_code.values(),
+            key=lambda item: item["distance_km"],
+        )[:limit]
+
+    except Exception as exc:
+        raise AirportResolutionError(
+            f"Airport provider resolution failed: {exc}"
+        ) from exc
 
 
 def format_price(amount: float, currency: str) -> str:
@@ -137,28 +203,43 @@ class RealFlightSearchTool(BaseTool):
         params: FlightInput,
     ) -> ToolResult:
 
-        origin_iata = get_iata(params.origin)
-        dest_iata = get_iata(params.destination)
-
-        # Never invoke the provider with unresolved LLM placeholders
-        # or malformed airport/date values.
-        if not re.fullmatch(r"[A-Z]{3}", origin_iata):
+        try:
+            origin_airports = resolve_airport_candidates(params.origin)
+            destination_airports = resolve_airport_candidates(
+                params.destination
+            )
+        except AirportResolutionError as exc:
+            search_query = (
+                f"Flights from {params.origin.strip()} "
+                f"to {params.destination.strip()} on {params.date}"
+            )
+            search_url = (
+                "https://www.google.com/travel/flights?"
+                f"q={quote_plus(search_query)}"
+            )
             return ToolResult(
-                success=False,
+                success=True,
                 message=(
-                    "Flight search skipped: "
-                    "a valid departure airport is required."
+                    "Airport data providers are temporarily unavailable. "
+                    "No live inventory was queried. Use the search link "
+                    "to check current routes and prices."
                 ),
+                data={
+                    "type": "flight_list",
+                    "items": [],
+                    "search_url": search_url,
+                    "live_inventory": False,
+                    "resolution_status": "provider_unavailable",
+                    "provider_error": str(exc),
+                },
             )
 
-        if not re.fullmatch(r"[A-Z]{3}", dest_iata):
-            return ToolResult(
-                success=False,
-                message=(
-                    "Flight search skipped: "
-                    "a valid destination airport is required."
-                ),
-            )
+        origin_iata = origin_airports[0]["iata"] if origin_airports else ""
+        dest_iata = (
+            destination_airports[0]["iata"]
+            if destination_airports
+            else ""
+        )
 
         try:
             parsed_date = datetime.strptime(
@@ -178,6 +259,57 @@ class RealFlightSearchTool(BaseTool):
                     "Flight search skipped: a valid date "
                     "in YYYY-MM-DD format is required."
                 ),
+            )
+
+        if not origin_iata or not dest_iata:
+            search_query = (
+                f"Flights from {params.origin.strip()} "
+                f"to {params.destination.strip()} on {params.date}"
+            )
+            search_url = (
+                "https://www.google.com/travel/flights?"
+                f"q={quote_plus(search_query)}"
+            )
+            return ToolResult(
+                success=True,
+                message=(
+                    "Airport codes were not provided, so live flight "
+                    "inventory was not queried. Use this search link "
+                    "to check routes and current prices."
+                ),
+                data={
+                    "type": "flight_list",
+                    "items": [],
+                    "search_url": search_url,
+                    "live_inventory": False,
+                    "resolution_status": "airport_not_found",
+                    "origin_airport_candidates": origin_airports,
+                    "destination_airport_candidates": destination_airports,
+                },
+            )
+
+        if not shutil.which("trvl"):
+            search_query = (
+                f"Flights from {params.origin.strip()} "
+                f"to {params.destination.strip()} on {params.date}"
+            )
+            search_url = (
+                "https://www.google.com/travel/flights?"
+                f"q={quote_plus(search_query)}"
+            )
+            return ToolResult(
+                success=True,
+                message=(
+                    "Live flight inventory is unavailable in this "
+                    "deployment. Use the flight search link to check "
+                    "current schedules and prices."
+                ),
+                data={
+                    "type": "flight_list",
+                    "items": [],
+                    "search_url": search_url,
+                    "live_inventory": False,
+                },
             )
 
         try:
@@ -231,9 +363,21 @@ class RealFlightSearchTool(BaseTool):
                 return ToolResult(
                     success=True,
                     message=(
-                        f"No flights found from {origin_iata} "
-                        f"to {dest_iata}."
+                        f"No live flights were returned from "
+                        f"{origin_iata} to {dest_iata}. "
+                        "Check the external search for other options."
                     ),
+                    data={
+                        "type": "flight_list",
+                        "items": [],
+                        "search_url": _flight_search_url(params),
+                        "live_inventory": True,
+                        "resolution_status": "no_results",
+                        "origin_airport": origin_airports[0],
+                        "destination_airport": destination_airports[0],
+                        "origin_airport_candidates": origin_airports,
+                        "destination_airport_candidates": destination_airports,
+                    },
                 )
 
             structured = []
@@ -241,18 +385,17 @@ class RealFlightSearchTool(BaseTool):
             for flight in valid[:3]:
                 legs = flight.get("legs", [])
 
-                raw_price = float(flight.get("price", 0))
-                raw_cur = flight.get("currency", "EUR").upper()
+                try:
+                    raw_price = float(flight.get("price", 0))
+                except (TypeError, ValueError):
+                    raw_price = 0.0
 
-                rate = (
-                    90.0
-                    if raw_cur == "EUR"
-                    else 83.0
-                    if raw_cur == "USD"
-                    else 1.0
+                raw_cur = str(flight.get("currency") or "").upper().strip()
+                display_price = (
+                    format_price(raw_price, raw_cur)
+                    if raw_price > 0 and raw_cur
+                    else "Price unavailable"
                 )
-
-                price_inr = raw_price * rate
 
                 segments = [
                     {
@@ -288,10 +431,8 @@ class RealFlightSearchTool(BaseTool):
 
                 structured.append(
                     {
-                        "price": format_price(
-                            price_inr,
-                            "INR",
-                        ),
+                        "price": display_price,
+                        "currency": raw_cur or None,
                         "segments": segments,
                         "stops": len(segments) - 1,
                         "url": booking_url,
@@ -306,17 +447,59 @@ class RealFlightSearchTool(BaseTool):
                 data={
                     "type": "flight_list",
                     "items": structured,
+                    "origin_airport": origin_airports[0],
+                    "destination_airport": destination_airports[0],
+                    "origin_airport_candidates": origin_airports,
+                    "destination_airport_candidates": destination_airports,
                 },
             )
 
         except Exception as e:
             return ToolResult(
-                success=False,
-                message=f"Flight search unavailable: {e}",
+                success=True,
+                message=(
+                    "The live flight provider could not complete the search. "
+                    "No live flight results are available; use the external "
+                    "search link to check current schedules and prices."
+                ),
+                data={
+                    "type": "flight_list",
+                    "items": [],
+                    "search_url": _flight_search_url(params),
+                    "live_inventory": False,
+                    "resolution_status": "provider_unavailable",
+                    "provider_error": str(e),
+                    "origin_airport": origin_airports[0],
+                    "destination_airport": destination_airports[0],
+                    "origin_airport_candidates": origin_airports,
+                    "destination_airport_candidates": destination_airports,
+                },
             )
 
 
 # ─── HOTELS ────────────────────────────────────────────────
+
+
+def _flight_search_url(params) -> str:
+    query = (
+        f"Flights from {params.origin.strip()} "
+        f"to {params.destination.strip()} on {params.date}"
+    )
+    return (
+        "https://www.google.com/travel/flights?"
+        f"q={quote_plus(query)}"
+    )
+
+
+def _hotel_search_url(params) -> str:
+    return (
+        "https://www.booking.com/searchresults.html"
+        f"?ss={quote_plus(params.city)}"
+        f"&checkin={params.check_in}"
+        f"&checkout={params.check_out}"
+        f"&group_adults={max(1, params.travellers)}"
+        "&no_rooms=1"
+    )
 
 
 class HotelInput(BaseModel):
@@ -393,6 +576,31 @@ class StayApiHotelTool(BaseTool):
 
         cli_city = normalize_cli_city(params.city)
 
+        if not shutil.which("trvl"):
+            search_url = (
+                "https://www.booking.com/searchresults.html"
+                f"?ss={quote_plus(params.city)}"
+                f"&checkin={params.check_in}"
+                f"&checkout={params.check_out}"
+                f"&group_adults={max(1, params.travellers)}"
+                "&no_rooms=1"
+            )
+            return ToolResult(
+                success=True,
+                message=(
+                    f"Live hotel inventory is unavailable in this "
+                    f"deployment for {params.city}. You can check "
+                    "current hotel availability and prices using "
+                    "the booking search link."
+                ),
+                data={
+                    "type": "hotel_list",
+                    "items": [],
+                    "search_url": search_url,
+                    "live_inventory": False,
+                },
+            )
+
         try:
             result = subprocess.run(
                 [
@@ -414,10 +622,20 @@ class StayApiHotelTool(BaseTool):
 
         except Exception as e:
             return ToolResult(
-                success=False,
+                success=True,
                 message=(
-                    f"Hotel provider error for {params.city}: {e}"
+                    f"The live hotel provider could not complete the search "
+                    f"for {params.city}. No live hotel results are available. "
+                    "Use the external search link to check current prices."
                 ),
+                data={
+                    "type": "hotel_list",
+                    "items": [],
+                    "search_url": _hotel_search_url(params),
+                    "live_inventory": False,
+                    "resolution_status": "provider_unavailable",
+                    "provider_error": str(e),
+                },
             )
 
         try:
@@ -433,24 +651,38 @@ class StayApiHotelTool(BaseTool):
                 )
             )
 
-        except json.JSONDecodeError:
+        except json.JSONDecodeError as e:
             return ToolResult(
-                success=False,
+                success=True,
                 message=(
-                    "Hotel provider returned unreadable data."
+                    "The hotel provider returned unreadable data. "
+                    "No live hotel results are available; use the external "
+                    "search link to check current availability."
                 ),
+                data={
+                    "type": "hotel_list",
+                    "items": [],
+                    "search_url": _hotel_search_url(params),
+                    "live_inventory": False,
+                    "resolution_status": "invalid_provider_response",
+                    "provider_error": str(e),
+                },
             )
 
         if not hotels:
             return ToolResult(
                 success=True,
                 message=(
-                    f"No hotels found in {params.city} "
-                    "for those dates."
+                    f"The provider returned no hotels in {params.city} "
+                    "for those dates. Check the external search for "
+                    "additional availability."
                 ),
                 data={
                     "type": "hotel_list",
                     "items": [],
+                    "search_url": _hotel_search_url(params),
+                    "live_inventory": True,
+                    "resolution_status": "no_results",
                 },
             )
 
@@ -479,24 +711,24 @@ class StayApiHotelTool(BaseTool):
             if not name:
                 continue
 
-            raw_price = float(hotel.get("price", 0))
-            raw_cur = hotel.get("currency", "EUR").upper()
-
-            if raw_price <= 0:
+            try:
+                raw_price = float(hotel.get("price", 0))
+            except (TypeError, ValueError):
                 continue
 
-            rate = (
-                90.0
-                if raw_cur == "EUR"
-                else 83.0
-                if raw_cur == "USD"
-                else 1.0
-            )
+            raw_cur = str(hotel.get("currency") or "").upper().strip()
 
-            per_night_inr = raw_price * rate
-            total_inr = per_night_inr * nights
+            if raw_price <= 0 or not raw_cur:
+                continue
 
-            if params.budget and total_inr > params.budget:
+            total_amount = raw_price * nights
+            total_inr = total_amount if raw_cur == "INR" else None
+
+            if (
+                params.budget is not None
+                and total_inr is not None
+                and total_inr > params.budget
+            ):
                 excluded += 1
                 continue
 
@@ -520,13 +752,14 @@ class StayApiHotelTool(BaseTool):
                     "name": name,
                     "address": hotel.get("address", ""),
                     "price_per_night": format_price(
-                        per_night_inr,
-                        "INR",
+                        raw_price,
+                        raw_cur,
                     ),
                     "total_stay": format_price(
-                        total_inr,
-                        "INR",
+                        total_amount,
+                        raw_cur,
                     ),
+                    "currency": raw_cur,
                     "nights": nights,
                     "total_inr": total_inr,
                     "booking_url": booking_url,
@@ -565,21 +798,24 @@ class StayApiHotelTool(BaseTool):
                     f"(all {excluded} exceeded budget)."
                 )
             else:
-                msg += " with verified pricing."
+                msg += "."
 
             return ToolResult(
                 success=True,
-                message=msg,
+                message=msg + " You can also check the external booking search.",
                 data={
                     "type": "hotel_list",
                     "items": [],
+                    "search_url": _hotel_search_url(params),
+                    "live_inventory": True,
+                    "resolution_status": (
+                        "budget_filtered" if excluded > 0 else "no_usable_results"
+                    ),
                 },
             )
 
-        candidates.sort(
-            key=lambda item: item["total_inr"]
-        )
-
+        # Provider order is retained because prices in different
+        # currencies are not directly comparable.
         top = candidates[:3]
 
         msg = (
@@ -587,7 +823,9 @@ class StayApiHotelTool(BaseTool):
             f"for {nights} nights"
         )
 
-        if params.budget:
+        if params.budget and all(
+            item["currency"] == "INR" for item in top
+        ):
             msg += (
                 f" within your ₹{params.budget:,.0f} budget"
             )
