@@ -1,6 +1,7 @@
 """Document upload, listing, deletion."""
 import io
 import logging
+import re
 
 from fastapi import APIRouter, Depends, File, UploadFile, HTTPException, Form
 from sqlalchemy.orm import Session
@@ -88,7 +89,7 @@ async def upload_document(
             detail="Supported formats: .pdf, .docx, .txt, .md, .csv, .json, .log, .py, .js, .ts",
         )
 
-    if not text.strip() or not text.replace("[Page 1]", "").strip():
+    if not re.sub(r"\\[Page \\d+\\]", "", text).strip():
         raise HTTPException(
             status_code=400,
             detail="Could not extract any text. The file may be a scanned image (OCR is not supported yet).",
