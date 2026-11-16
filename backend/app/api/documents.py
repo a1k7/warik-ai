@@ -30,8 +30,8 @@ def _extract_text_from_pdf(data: bytes) -> tuple[str, int]:
             except Exception:
                 logger.warning("Text extraction failed for PDF page %s", page_number, exc_info=True)
                 page_text = ""
-            pages.append(f"[Page {page_number}]\\n{page_text}".strip())
-        return "\\n\\n".join(pages), len(reader.pages)
+            pages.append(f"[Page {page_number}]\n{page_text}".strip())
+        return "\n\n".join(pages), len(reader.pages)
     except ImportError:
         raise HTTPException(status_code=500, detail="PDF parser not installed. Run: pip install pypdf")
     except Exception as exc:
@@ -44,7 +44,7 @@ def _extract_text_from_docx(data: bytes) -> tuple[str, int]:
         from docx import Document as DocxDocument
         doc = DocxDocument(io.BytesIO(data))
         paragraphs = [p.text for p in doc.paragraphs if p.text.strip()]
-        return "[Page 1]\\n" + "\\n\\n".join(paragraphs), 1
+        return "[Page 1]\n" + "\n\n".join(paragraphs), 1
     except ImportError:
         raise HTTPException(status_code=500, detail="DOCX parser not installed. Run: pip install python-docx")
     except Exception as exc:
@@ -55,7 +55,7 @@ def _extract_text_from_docx(data: bytes) -> tuple[str, int]:
 def _extract_text_plain(data: bytes) -> tuple[str, int]:
     try:
         decoded = data.decode("utf-8")
-        return "[Page 1]\\n" + decoded, 1
+        return "[Page 1]\n" + decoded, 1
     except UnicodeDecodeError as exc:
         raise HTTPException(status_code=400, detail="Text files must use UTF-8 encoding.") from exc
 
@@ -89,14 +89,14 @@ async def upload_document(
             detail="Supported formats: .pdf, .docx, .txt, .md, .csv, .json, .log, .py, .js, .ts",
         )
 
-    if not re.sub(r"\\[Page \\d+\\]", "", text).strip():
+    if not re.sub(r"\[Page \d+\]", "", text).strip():
         raise HTTPException(
             status_code=400,
             detail="Could not extract any text. The file may be a scanned image (OCR is not supported yet).",
         )
 
     if len(text) > MAX_TEXT_LENGTH:
-        text = text[:MAX_TEXT_LENGTH] + "\\n\\n[Document truncated at 500,000 characters]"
+        text = text[:MAX_TEXT_LENGTH] + "\n\n[Document truncated at 500,000 characters]"
 
     doc = Document(
         user_id=user.id,
@@ -115,7 +115,7 @@ async def upload_document(
         document_id=doc.id,
         filename=doc.filename,
         page_count=doc.page_count,
-        char_count=doc.char_count,
+        char_count=len(text),
         preview=text[:300].strip(),
     )
 
