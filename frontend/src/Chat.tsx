@@ -335,7 +335,24 @@ export const Chat = () => {
 
   useEffect(() => {
     if (activeConvId) {
-      fetchConversationDetail(activeConvId).then(data => setMessages(data.messages)).catch(e => console.error(e));
+      fetchConversationDetail(activeConvId).then(data => {
+        const hydrated: Message[] = (data.messages || []).map((message: Message) => {
+          const stored = message.structured_data as any;
+          const confirmation = stored?.__confirmation;
+          if (!confirmation) return message;
+          const { __confirmation: _metadata, ...visibleData } = stored;
+          return {
+            ...message,
+            needs_confirmation: Boolean(confirmation.needs_confirmation && !confirmation.status),
+            confirmation_token: confirmation.confirmation_token,
+            pending_tool: confirmation.pending_tool,
+            pending_args: confirmation.pending_args,
+            confirmation_status: confirmation.status || (confirmation.needs_confirmation ? 'pending' : undefined),
+            structured_data: Object.keys(visibleData).length ? visibleData : undefined,
+          };
+        });
+        setMessages(hydrated);
+      }).catch(e => console.error(e));
     }
   }, [activeConvId]);
 
