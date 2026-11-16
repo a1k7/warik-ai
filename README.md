@@ -1,129 +1,119 @@
 # Warik AI
 
-**Your AI companion for everyday life.**
-Built by Warik Labs.
+**An India-first personal action assistant.**
 
-Voice-first personal AI companion. India-first, local-first, privacy-conscious.
+Warik helps people move everyday work forward: speak or type a request, use supported tools, keep important context, and track follow-through until the user records an outcome.
 
-> **Status:** Phase 4 — Gnani Prisma STT integration.
-> Gnani TTS, tasks/expenses REST CRUD, travel/food UI and the React frontend arrive in later phases.
+The product thesis is simple: a useful assistant should not only answer; it should help a person remember what is pending, take permitted steps, and avoid silently dropping commitments.
 
----
+> **Project status: early alpha.** The current codebase includes a React application, FastAPI backend, tool-driven conversations, an Action Ledger, personal memory, and a multilingual voice capture path. Provider credentials and external integrations are required for some capabilities. This is not yet a general-purpose autonomous desktop agent.
 
-## Tech stack
+## Product
 
-- **Frontend:** React, TypeScript, Vite, Tailwind CSS (Phase 8)
-- **Backend:** Python, FastAPI, Pydantic, SQLAlchemy
-- **Database:** SQLite locally; PostgreSQL-ready via `DATABASE_URL`
-- **Reasoning:** Ollama (free local model), replaceable provider layer
-- **Voice:** Gnani Prisma STT (Phase 4), Gnani Timbre TTS (Phase 5) — backend-only keys
-- **Auth:** bcrypt password hashing + JWT bearer tokens
+### What is implemented
 
----
+- **Conversational assistant:** chat-based requests routed through an orchestrator, tool registry, and structured workflows.
+- **Action Ledger:** capture commitments with a title, context, counterparty, due date, and status (open, in progress, waiting, blocked, completed). Marking a commitment complete requires a user-entered verification note.
+- **Approval checkpoints:** supported consequential tool actions can ask the user for explicit confirmation; tool activity is recorded in action logs.
+- **Personal memory:** users can save, edit, and delete context that may be relevant in later conversations.
+- **Everyday organisation:** tasks, reminders, expense records and summaries.
+- **Travel and food discovery:** itinerary planning and map-listed restaurant candidates. Availability, live prices, menu data, and dietary suitability must not be assumed unless a provider explicitly verifies them.
+- **Documents:** upload supported documents and ask questions about their contents.
+- **India-first voice capture:** browser recording, ten speech-language choices, a transcript review/edit step, and an explicit send step. Voice is disabled by default and requires a configured speech provider.
 
-## Backend setup
+### What is not implemented yet
 
+Warik is inspired by the action-oriented assistant category, but it does **not** yet provide:
 
-cd warik-ai/backend
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-cp ../.env.example .env
-uvicorn app.main:app --reload --reload-dir app
+- WhatsApp or iMessage control, a dedicated phone number, or an always-on messaging channel.
+- A dedicated cloud desktop or reliable general-purpose browser/phone control.
+- Autonomous UPI, banking, bill payment, or credential/OTP handling.
+- Automatic merchant refund retrieval, complaint filing, or guaranteed resolution.
+- A guarantee that third-party inventory, prices, restaurant menus, or delivery slots are current.
 
-Open http://127.0.0.1:8000/docs.
+These are roadmap candidates, not capabilities to claim in a demo or investor application.
 
-Voice — Gnani Prisma STT
+## Technology
 
-Voice is off by default so you never spend a Gnani credit accidentally.
+- Frontend: React, TypeScript, Vite, Tailwind CSS
+- Backend: Python, FastAPI, Pydantic, SQLAlchemy
+- Local database: SQLite; configure PostgreSQL through the database URL for a hosted deployment
+- LLM provider layer: local Ollama or configured hosted provider
+- Speech-to-text: configured Groq or Gnani provider
+- Authentication: JWT bearer tokens and password hashing
 
-To enable it:
+## Local development
 
-Edit backend/.env:
+### Backend
 
-dotenv
-VOICE_ENABLED=true
-GNANI_API_KEY=your_real_key_here
-# Optional — only if your Gnani account requires them:
-# GNANI_ORG_ID=...
-# GNANI_USER_ID=...
-Restart uvicorn.
-If either flag is missing, the endpoint returns 503 without making a network call — no credit is spent.
+From the repository root:
 
+    cd backend
+    python3 -m venv .venv
+    source .venv/bin/activate
+    pip install -r requirements.txt
+    cp ../.env.example .env
+    uvicorn app.main:app --reload
 
-# Credit protection
+The API documentation is available at http://127.0.0.1:8000/docs.
 
-# Guard	Value
-Daily per-user cap	VOICE_USAGE_LIMIT_SECONDS (default 300 s)
-Max upload	VOICE_MAX_UPLOAD_BYTES (default 5 MB)
-Max duration	VOICE_MAX_DURATION_SECONDS (default 30 s)
-Usage ledger	voice_usage table — one row per user per day
-Pre-check runs before Gnani is contacted. Post-success increments the counter. Inspect your spend:
+### Frontend
 
+In a second terminal:
 
-sqlite3 backend/warik.db "SELECT usage_date, seconds_used, requests_count FROM voice_usage;"
-Endpoints
+    cd frontend
+    npm ci
+    printf 'VITE_API_BASE_URL=http://127.0.0.1:8000/api\n' > .env.local
+    npm run dev
 
-Route	Purpose
-POST /api/voice/transcribe	audio → {"transcript": "..."}
-POST /api/voice/message	audio → transcript → agent → reply (no TTS)
-Accepted audio: audio/wav, audio/mpeg, audio/flac, audio/ogg, audio/mp4, audio/x-m4a, application/octet-stream.
+Open the Vite URL printed by the development server.
 
-Supported languages: bn-IN, en-IN, gu-IN, hi-IN, kn-IN, ml-IN, mr-IN, pa-IN, ta-IN, te-IN.
+## Voice configuration
 
-# Try it (once enabled)
+Voice capture is off by default. To enable it, edit backend/.env:
 
-bash
-TOKEN="paste_access_token_here"
+    VOICE_ENABLED=true
+    GROQ_API_KEY=your_server_side_key
 
-curl -X POST http://127.0.0.1:8000/api/voice/message \
-  -H "Authorization: Bearer $TOKEN" \
-  -F "audio=@/path/to/clip.wav;type=audio/wav" \
-  -F "language_code=en-IN" \
-  -F "duration_seconds=4"
-Response:
+You can use a configured Gnani key instead. Keep provider keys on the backend; never put them in a VITE_ variable or commit them.
 
-json
-{
-  "transcript": "remind me to study at 7 pm",
-  "reply": "Reminder set: study — 31 Oct 2026, 19:00.",
-  "tool_calls": [{"tool_name": "create_reminder", "success": true, ...}],
-  "needs_confirmation": false
-}
-The agent
+The current voice UI supports Bengali, English (India), Gujarati, Hindi, Kannada, Malayalam, Marathi, Punjabi, Tamil, and Telugu. Recordings are capped in the UI at 28 seconds; the API also enforces upload-size and duration limits. The transcript is editable and is not sent to the assistant until the user chooses to use it and then submits the chat message.
 
-The agent pipeline (Phase 3) is unchanged:
+## Tests and build
 
-Deterministic parser → 2. Ollama (if configured) → 3. tool validation → 4. confirmation card if required → 5. execution → 6. audit log.
-12 tools: create_task, list_tasks, complete_task, create_reminder, list_reminders, add_expense (confirm), list_expenses, calculate_expense_summary, create_travel_plan (confirm), save_memory, retrieve_memory, delete_memory (confirm).
+Backend:
 
-# Tests
+    cd backend
+    pytest -q
 
+Frontend:
 
-cd warik-ai/backend
-source .venv/bin/activate
-pytest -q
-The voice tests use httpx.MockTransport — no real Gnani key is required, no credit is spent.
+    cd frontend
+    npm ci
+    npm run build
 
-# Security notes
+The speech tests should use mocked providers. Do not use a real provider key in automated tests.
 
-.env is Git-ignored. Keys never leave the backend.
-JWTs signed with JWT_SECRET; change it before any demo.
-Confirmation tokens bound to user_id, 10-minute expiry.
-Every tool call audited in action_logs; every voice call audited in voice_usage.
-Per-user isolation enforced by get_current_user and per-tool ownership checks.
-Phases
+## Security and release checklist
 
-Phase	Scope	Status
-1	Architecture, project structure, backend foundation	✅
-2	Database models, schemas, auth	✅
-3	Agent, tool registry, deterministic parser, Ollama provider	✅
-4	Gnani STT + voice usage ledger	✅
-5	Gnani TTS	next
-6	Tasks / expenses / reminders REST CRUD	
-7	Travel, food, memory	
-8	React frontend	
-9	Integration, testing, bug fixes	
-10	Local deployment and documentation	
+Before any external pilot:
 
+1. Set a unique, high-entropy JWT secret and use HTTPS.
+2. Use PostgreSQL or another managed database with backups; do not rely on a developer SQLite file.
+3. Confirm per-user ownership checks on every record and tool.
+4. Keep provider credentials server-side and rotate any key that may have been exposed.
+5. Keep sensitive or irreversible actions behind a confirmation checkpoint.
+6. Document which audio, document, and conversation data is sent to each external provider.
+7. Add retention and deletion controls that match the data actually stored.
+8. Test provider outages, retries, duplicate requests, and partial workflow failures.
+9. Do not enable payments, OTP handling, or autonomous account access without explicit user authorization and a separate security review.
 
+## India-first product direction
+
+The near-term wedge is **personal follow-through**: refunds someone is waiting for, documents that need to be submitted, appointments to confirm, a person who owes a response, and household or work errands that otherwise disappear in chats and memory.
+
+The Action Ledger is the first product primitive for this wedge. Voice makes capture more natural; the ledger makes pending work visible; reminders and approval checkpoints provide a safe path to action. See docs/INDIA_FIRST_PRODUCT_STRATEGY.md.
+
+## YC / pilot narrative
+
+Do not pitch Warik as “Instinct copied for India” or as a universal agent that can already control every app. Pitch the specific user problem, show one end-to-end workflow, disclose what is manual versus automated, and demonstrate repeat usage and completed outcomes. Investor credibility comes from real user behaviour and measured reliability, not a large feature list.
