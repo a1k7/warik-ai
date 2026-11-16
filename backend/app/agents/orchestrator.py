@@ -240,6 +240,64 @@ def _build_confirmation_response(
         pending_args=params.model_dump(mode="json"),
     )
 
+
+def _extract_commitment_proposal(text: str) -> dict | None:
+    """Detect only explicit first-person commitments; never create records here."""
+    match = re.search(
+        r"\b(?:i(?:'ll| will| need to)|remind me to|don't let me forget to)\s+"
+        r"([a-z][a-z0-9 ,'-]{3,179})",
+        text.strip(),
+        re.IGNORECASE,
+    )
+    if not match:
+        return None
+
+    clause = re.split(r"[.!?;\n]", match.group(1), maxsplit=1)[0].strip(" ,")
+    clause = re.sub(
+        r"\s+\b(?:by|before|on|at)\s+"
+        r"(?:today|tomorrow|tonight|monday|tuesday|wednesday|thursday|friday|saturday|sunday|"
+        r"\d{4}-\d{2}-\d{2}|next\s+\w+).*$",
+        "",
+        clause,
+        flags=re.IGNORECASE,
+    ).strip(" ,")
+    if not clause or len(clause) < 5:
+        return None
+
+    first_word = clause.split()[0].lower()
+    allowed_actions = {
+        "send", "submit", "finish", "complete", "call", "email", "message",
+        "meet", "prepare", "review", "share", "pay", "book", "schedule",
+        "upload", "download", "apply", "ask", "contact", "follow", "check",
+        "buy", "collect", "deliver", "write", "create", "build", "fix",
+        "study", "attend", "discuss", "renew", "cancel", "return",
+    }
+    if first_word not in allowed_actions:
+        return None
+
+    title = clause[0].upper() + clause[1:]
+    if len(title) > 200:
+        title = title[:197].rstrip() + "..."
+    return {
+        "type": "commitment_proposal",
+        "title": title,
+        "details": "Detected in this conversation. Review and edit before saving.",
+        "source": "conversation",
+    }
+
+
+def _attach_commitment_proposal(
+    response: AgentMessageResponse,
+    user_text: str,
+) -> AgentMessageResponse:
+    proposal = _extract_commitment_proposal(user_text)
+    if proposal:
+        response.structured_data = {
+            **(response.structured_data or {}),
+            "commitment_proposal": proposal,
+        }
+    return response
+
 def _extract_city_from_text(text: str) -> str | None:
     """Strict city extraction. Known cities first, then regex."""
 
@@ -1033,7 +1091,8 @@ async def handle_message(
         )
 
     if decision.get("decision") == "chat" and decision.get("reply"):
-        return AgentMessageResponse(reply=decision["reply"])
+        response = AgentMessageResponse(reply=decision["reply"])
+        return _attach_commitment_proposal(response, text)
 
     # 10. LLM FALLBACK
     llm_reply = await provider.synthesize(
@@ -1045,7 +1104,8 @@ async def handle_message(
         tool_context="No tools used. Answer the user's question directly.",
     )
 
-    return AgentMessageResponse(reply=llm_reply)
+    response = AgentMessageResponse(reply=llm_reply)
+    return _attach_commitment_proposal(response, text)
 
 
 # ─── WORKFLOW RESPONSE ──────────────────────────────────────
