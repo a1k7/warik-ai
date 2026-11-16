@@ -55,27 +55,16 @@ TRAVEL_PATTERNS = [
 ]
 
 FOOD_PATTERNS = [
-    r"\b(?:find|show|recommend|suggest|good|best|cheap)\b.*\b(?:restaurant|food|cafe|eat|dinner|lunch|breakfast)\b",
+    r"\b(?:find|show|recommend|suggest|good|best|cheap)\b.*\b(?:restaurants?|food|cafes?|eat|dinner|lunch|breakfast|places? to eat)\b",
     r"\b(?:hungry|what should i eat|where.*eat)\b",
     r"\b(?:biryani|pizza|burger|momos|dosa|idli|chinese|thali|paneer|chicken|shawarma|kebab)\b",
+    r"\bfood\b.*\b(?:preference|prefer|diet|requirement|option|choice)\b",
 ]
 
 HOTEL_PATTERNS = [
     r"\b(?:find|show|book|search|need|want)\b.*\b(?:hotel|stay|accommodation|room)\b",
     r"\bhotel\b.*\b(?:in|near|at)\b",
 ]
-
-
-# ─── COMPREHENSIVE KNOWN CITIES ─────────────────────────────
-
-KNOWN_CITY_NAMES = {
-    "delhi", "new delhi", "mumbai", "bombay", "bangalore", "bengaluru",
-    "chennai", "kolkata", "hyderabad", "pune", "jaipur", "goa", "panaji",
-    "kochi", "cochin", "ahmedabad", "lucknow", "agra", "varanasi", "amritsar",
-    "udaipur", "jodhpur", "jaisalmer", "shimla", "manali", "dharamshala",
-    "darjeeling", "munnar", "alleppey", "alappuzha", "trivandrum", "wayanad",
-    "bhopal", "indore", "nagpur", "surat", "vadodara", "coimbatore",
-}
 
 
 # ─── STATE ↔ CITIES (FOR MISMATCH DETECTION) ────────────────
@@ -431,23 +420,17 @@ def _attach_commitment_proposal(
     return response
 
 def _extract_city_from_text(text: str) -> str | None:
-    """Strict city extraction. Known cities first, then regex."""
-
-    text_lower = text.lower()
-
-    for city in KNOWN_CITY_NAMES:
-        if re.search(rf"\b{re.escape(city)}\b", text_lower):
-            return city.title() if city != "new delhi" else "New Delhi"
-
+    """Extract a user-supplied city or neighbourhood without a fixed city list."""
     match = re.search(
-        r"(?:in|near|around|at)\s+([A-Z][a-zA-Z]+(?:\s+[A-Z][a-zA-Z]+)?)",
+        r"\b(?:in|near|around|at)\s+(.+?)"
+        r"(?=\s+(?:under|below|within|for|with|on|from|to|check[ -]?in|check[ -]?out)\b|[,!?;.]|$)",
         text,
+        re.IGNORECASE,
     )
-
-    if match:
-        return match.group(1).strip()
-
-    return None
+    if not match:
+        return None
+    location = " ".join(match.group(1).strip().split())
+    return location or None
 
 
 def _is_short_slot_reply(text: str) -> bool:
@@ -660,9 +643,11 @@ async def handle_message(
                     user,
                     "discover_food",
                     {
+                        **(awaiting.get("food_params") or {
+                            "query": awaiting.get("query", "restaurant"),
+                            "budget": awaiting.get("budget"),
+                        }),
                         "location": city,
-                        "query": awaiting.get("query", "restaurant"),
-                        "budget": awaiting.get("budget"),
                     },
                 )
                 return resp
@@ -1048,22 +1033,34 @@ async def handle_message(
                 food_query = dish
                 break
 
+        dietary_requirements = []
+        for match in re.finditer(
+            r"\b(?:non[\s-]?vegetarian|vegetarian|non[\s-]?veg|veg)\b",
+            text,
+            re.IGNORECASE,
+        ):
+            value = match.group(0).lower()
+            if value not in dietary_requirements:
+                dietary_requirements.append(value)
+
+        food_params = {
+            "query": food_query,
+            "budget": budget,
+            "dietary_requirements": dietary_requirements,
+        }
+
         if not city:
             state["awaiting"] = {
                 "slot": "city",
                 "intent": "food",
-                "budget": budget,
-                "query": food_query,
+                "food_params": food_params,
             }
 
             conversation.state_json = state
             db.commit()
 
             return AgentMessageResponse(
-                reply=(
-                    "I can find that for you! Which city? "
-                    "(e.g., Delhi, Mumbai, Bangalore)"
-                )
+                reply="Which city or neighbourhood should I search in?"
             )
 
         state["last_location"] = city
@@ -1075,9 +1072,8 @@ async def handle_message(
             user,
             "discover_food",
             {
+                **food_params,
                 "location": city,
-                "query": food_query,
-                "budget": budget,
             },
         )
 

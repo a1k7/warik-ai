@@ -343,24 +343,56 @@ def _try_parse_trip(text: str) -> Optional[dict]:
     return {"intent": "generate_advanced_itinerary", "params": params}
 
 def _try_parse_food(text: str) -> Optional[dict]:
+    """Parse flexible food requests without a hard-coded Indian city catalogue."""
     low = text.lower()
-    food_keywords = ["hungry", "eat", "food", "khana", "restaurant", "cafe", "coffee", "biryani", "pizza", "momos", "dosa", "chinese", "thali", "vegetarian", "veg", "non-veg", "spicy", "healthy"]
-    if not any(k in low for k in food_keywords) and len(text.split()) > 3: return None
-    if len(text.split()) <= 2 and text[0].isupper() and not any(k in low for k in food_keywords):
-        return {"intent": "discover_food", "params": {"location": text.strip(), "query": "restaurant"}}
-    loc_match = re.search(r"(?:in|near|around)\s+([a-zA-Z\s]+)", text, re.IGNORECASE)
-    location = loc_match.group(1).strip() if loc_match else ""
-    location = re.sub(r"\b(on|for|with|under|below)\b.*", "", location, flags=re.IGNORECASE).strip()
+    food_keywords = (
+        "hungry", "eat", "food", "khana", "restaurant", "cafe", "coffee",
+        "dining", "biryani", "pizza", "burger", "momos", "dosa", "idli",
+        "chinese", "thali", "paneer", "chicken", "shawarma", "kebab",
+    )
+    is_recommendation = re.search(
+        r"\b(?:find|show|recommend|suggest|good|best|cheap)\b.*"
+        r"\b(?:place to eat|where to eat|restaurants?|cafes?)\b",
+        text,
+        re.IGNORECASE,
+    )
+    if not any(keyword in low for keyword in food_keywords) and not is_recommendation:
+        return None
+
+    location_match = re.search(
+        r"\b(?:in|near|around|at)\s+(.+?)"
+        r"(?=\s+(?:under|below|within|for|with|on|from|to)\b|[,!?;.]|$)",
+        text,
+        re.IGNORECASE,
+    )
+    location = location_match.group(1).strip() if location_match else ""
+
     query = "restaurant"
-    if "biryani" in low: query = "biryani"
-    elif "pizza" in low: query = "pizza"
-    elif "momos" in low: query = "momos"
-    elif "dosa" in low: query = "dosa"
-    elif "cafe" in low or "coffee" in low: query = "cafe"
-    elif "vegetarian" in low or "veg" in low: query = "vegetarian restaurant"
-    elif "spicy" in low: query = "spicy food"
-    elif "healthy" in low: query = "healthy food"
-    return {"intent": "discover_food", "params": {"location": location, "query": query}}
+    for dish in ("biryani", "pizza", "burger", "momos", "dosa", "idli", "thali", "paneer", "chicken", "shawarma", "kebab"):
+        if re.search(rf"\b{dish}\b", low):
+            query = dish
+            break
+    if re.search(r"\b(?:cafe|coffee)\b", low):
+        query = "cafe"
+
+    params = {"location": location, "query": query}
+    budget = _extract_budget(text)
+    if budget is not None:
+        params["budget"] = budget
+
+    dietary = []
+    for match in re.finditer(
+        r"\b(?:non[\s-]?vegetarian|vegetarian|non[\s-]?veg|veg)\b",
+        text,
+        re.IGNORECASE,
+    ):
+        value = match.group(0).lower()
+        if value not in dietary:
+            dietary.append(value)
+    if dietary:
+        params["dietary_requirements"] = dietary
+
+    return {"intent": "discover_food", "params": params}
 
 def _try_parse_hotel(text: str, ref: datetime) -> Optional[dict]:
     match = re.search(r"(?:hotels?|stays?|accommodation).*?(?:in|near)\s+([a-zA-Z]+)", text, re.IGNORECASE)
@@ -423,7 +455,7 @@ def parse(text: str, ref: Optional[datetime] = None) -> Optional[dict]:
         if re.search(r"\bflights?\b|\bfly\b", t, re.IGNORECASE):
             route = _try_parse_flight(t, now)
             if route: return route
-        if re.search(r"\b(?:hungry|eat|food|khana|restaurant|cafe|coffee|biryani|pizza|momos|dosa|vegetarian|veg|spicy|healthy)\b", t, re.IGNORECASE):
+        if re.search(r"\b(?:hungry|eat|food|khana|restaurants?|cafes?|coffee|dining|biryani|pizza|burger|momos|dosa|idli|thali|paneer|chicken|shawarma|kebab|vegetarian|veg|spicy|healthy)\b", t, re.IGNORECASE):
             route = _try_parse_food(t)
             if route: return route
         if re.search(r"\bcab\b|\btaxi\b|\bauto\b|\bola\b|\buber\b", t, re.IGNORECASE):
