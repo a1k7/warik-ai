@@ -56,17 +56,37 @@ def update_conversation_context(conversation, user_text: str) -> dict[str, Any]:
 
 
 def build_conversation_context(conversation, latest_text: str = "", workflow=None) -> str:
-    """Build bounded planner context from recent turns, task state and workflow."""
+    """Build bounded planner context without repeating the current user turn."""
     lines = ["CONVERSATION CONTEXT (reference only; latest user request has priority):"]
     state = dict(getattr(conversation, "state_json", None) or {})
     task = dict(state.get("conversation_context") or {})
     entities = dict(task.get("entities") or {})
-    if task.get("latest_user_message"):
-        lines.append(f"Previous task request: {str(task['latest_user_message'])[:MAX_MESSAGE_CHARS]}")
+
+    messages = list(getattr(conversation, "messages", None) or [])
+    if (
+        latest_text
+        and messages
+        and getattr(messages[-1], "role", None) == "user"
+        and str(getattr(messages[-1], "content", "")).strip() == latest_text.strip()
+    ):
+        # send_message persists the user message before calling the orchestrator.
+        # The authoritative latest turn is appended once below.
+        messages = messages[:-1]
+
+    recent = messages[-MAX_RECENT_MESSAGES:]
+    recent_user_texts = {
+        str(getattr(message, "content", "")).strip()
+        for message in recent
+        if getattr(message, "role", None) == "user"
+    }
+
+    previous_request = str(task.get("latest_user_message") or "").strip()
+    if previous_request and previous_request != latest_text.strip():
+        if previous_request not in recent_user_texts:
+            lines.append(f"Previous task request: {previous_request[:MAX_MESSAGE_CHARS]}")
+
     if entities:
         lines.append("Explicitly mentioned task details: " + repr(entities)[:700])
-    messages = list(getattr(conversation, "messages", None) or [])
-    recent = messages[-MAX_RECENT_MESSAGES:]
     if recent:
         lines.append("Recent conversation turns:")
         for message in recent:
@@ -74,6 +94,7 @@ def build_conversation_context(conversation, latest_text: str = "", workflow=Non
             content = str(getattr(message, "content", ""))[:MAX_MESSAGE_CHARS]
             if content:
                 lines.append(f"{role}: {content}")
+
     if workflow is not None:
         steps = list(getattr(workflow, "steps_json", None) or [])
         summary = []
@@ -83,6 +104,7 @@ def build_conversation_context(conversation, latest_text: str = "", workflow=Non
                 "status": step.get("status"), "tool": step.get("tool"),
             })
         lines.append(f"Active workflow {getattr(workflow, 'id', '')} ({getattr(workflow, 'status', 'unknown')}): {summary!r}")
+
     if latest_text:
         lines.append(f"LATEST USER MESSAGE (authoritative): {latest_text[:MAX_MESSAGE_CHARS]}")
     result = "\n".join(lines)
