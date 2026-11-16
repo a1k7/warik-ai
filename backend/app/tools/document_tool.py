@@ -10,7 +10,7 @@ from app.models.document import Document
 
 logger = logging.getLogger(__name__)
 
-_PAGE_MARKER = re.compile(r"^\\[Page (\\d+)\\]$", re.MULTILINE)
+_PAGE_MARKER = re.compile(r"^\[Page (\d+)\]$", re.MULTILINE)
 _TOKEN = re.compile(r"[a-z0-9][a-z0-9'-]{2,}")
 _STOP_WORDS = {
     "about", "after", "again", "also", "and", "are", "because", "been",
@@ -33,19 +33,19 @@ def _chunk_text(text: str, size: int = 5000) -> list[str]:
     current = ""
     current_page = "Page 1"
 
-    for paragraph in text.split("\\n\\n"):
+    for paragraph in text.split("\n\n"):
         paragraph = paragraph.strip()
         if not paragraph:
             continue
         marker = _PAGE_MARKER.fullmatch(paragraph)
         if marker:
             current_page = f"Page {marker.group(1)}"
-        candidate = f"{current}\\n\\n{paragraph}" if current else paragraph
+        candidate = f"{current}\n\n{paragraph}" if current else paragraph
         if current and len(candidate) > size:
             chunks.append(current.strip())
             # Carry the current page label into the next chunk so citations
             # remain meaningful when a long page spans multiple chunks.
-            current = f"[{current_page}]\\n\\n{paragraph}" if not marker else paragraph
+            current = f"[{current_page}]\n\n{paragraph}" if not marker else paragraph
         else:
             current = candidate
     if current.strip():
@@ -71,7 +71,6 @@ def _select_relevant(chunks: list[str], question: str, top_k: int = 4) -> list[s
         score = sum(min(count, 5) for count in term_counts.values())
         if normalized_question and normalized_question in normalized_chunk:
             score += 10
-        # Prefer chunks that cover more distinct query terms over repetition.
         score += sum(2 for count in term_counts.values() if count)
         scored.append((score, index))
 
@@ -123,10 +122,10 @@ class AnswerDocumentTool(BaseTool):
         else:
             selected = chunks
 
-        context = "\\n\\n---\\n\\n".join(selected)
+        context = "\n\n---\n\n".join(selected)
         omitted = max(0, len(chunks) - len(selected))
         coverage_note = (
-            f"\\n\\nRetrieval note: {len(selected)} of {len(chunks)} sections supplied; "
+            f"\n\nRetrieval note: {len(selected)} of {len(chunks)} sections supplied; "
             f"{omitted} sections omitted."
             if omitted else ""
         )
