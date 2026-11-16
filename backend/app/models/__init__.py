@@ -1,3 +1,4 @@
+from app.models.commitment import Commitment
 from app.models.confirmation import Confirmation
 from app.models.action_log import ActionLog
 from app.models.conversation import Conversation, Message
@@ -13,7 +14,7 @@ from app.models.voice_usage import VoiceUsage
 from app.models.workflow import Goal, Workflow
 from app.models.document import Document
 __all__ = [
-    "Confirmation",
+    "Commitment", "Confirmation",
     "ActionLog", "Conversation", "Expense", "FavoriteRestaurant", "Memory",
     "Message", "Reminder", "SavedHotel", "SavedTrip", "Task",
     "TravelPlan", "TravelStop", "User", "UserPreference", "VoiceUsage",
