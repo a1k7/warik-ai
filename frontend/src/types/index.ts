@@ -156,6 +156,9 @@ export interface StructuredData {
     details?: string;
     source?: string;
     saved?: boolean;
+    counterparty?: string | null;
+    due_at?: string | null;
+    timezone?: string | null;
   };
 }
 
