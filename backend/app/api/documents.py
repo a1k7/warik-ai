@@ -30,7 +30,7 @@ def _extract_text_from_pdf(data: bytes) -> tuple[str, int]:
             except Exception:
                 logger.warning("Text extraction failed for PDF page %s", page_number, exc_info=True)
                 page_text = ""
-            pages.append(f"[Page {page_number}]\n{page_text}".strip())
+            pages.append(f"[Page {page_number}]\n\n{page_text}".strip())
         return "\n\n".join(pages), len(reader.pages)
     except ImportError:
         raise HTTPException(status_code=500, detail="PDF parser not installed. Run: pip install pypdf")
@@ -44,7 +44,7 @@ def _extract_text_from_docx(data: bytes) -> tuple[str, int]:
         from docx import Document as DocxDocument
         doc = DocxDocument(io.BytesIO(data))
         paragraphs = [p.text for p in doc.paragraphs if p.text.strip()]
-        return "[Page 1]\n" + "\n\n".join(paragraphs), 1
+        return "[Page 1]\n\n" + "\n\n".join(paragraphs), 1
     except ImportError:
         raise HTTPException(status_code=500, detail="DOCX parser not installed. Run: pip install python-docx")
     except Exception as exc:
@@ -55,7 +55,7 @@ def _extract_text_from_docx(data: bytes) -> tuple[str, int]:
 def _extract_text_plain(data: bytes) -> tuple[str, int]:
     try:
         decoded = data.decode("utf-8")
-        return "[Page 1]\n" + decoded, 1
+        return "[Page 1]\n\n" + decoded, 1
     except UnicodeDecodeError as exc:
         raise HTTPException(status_code=400, detail="Text files must use UTF-8 encoding.") from exc
 
