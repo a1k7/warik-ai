@@ -193,7 +193,7 @@ export interface CommitmentItem {
 }
 export const commitmentsApi = {
   list: async () => (await api.get<CommitmentItem[]>('/commitments/')).data,
-  create: async (payload: {title:string; details?:string; counterparty?:string; due_at?:string}) =>
+  create: async (payload: {title:string; details?:string; counterparty?:string; due_at?:string; source?:string}) =>
     (await api.post<CommitmentItem>('/commitments/', payload)).data,
   update: async (id:number, payload: {status?:CommitmentStatus; verification_note?:string}) =>
     (await api.patch<CommitmentItem>(`/commitments/${id}`, payload)).data,
