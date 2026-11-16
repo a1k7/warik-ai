@@ -41,3 +41,45 @@ def finalize_confirmation(db: Session, *, confirmation_id: int, user_id: int, su
     record.status = "EXECUTED" if success else "FAILED"
     db.add(ActionLog(user_id=user_id, action="confirmation.executed" if success else "confirmation.execution_failed", tool_name=record.tool_name, payload={"confirmation_id": record.id, "jti": record.jti}, result_status="success" if success else "failed", result_message=(message or "")[:1000]))
     db.commit()
+
+
+def decline_confirmation(db: Session, *, jti: str, user_id: int) -> tuple[bool, str]:
+    """Atomically decline a still-pending confirmation; tokens cannot be reused."""
+    now = _now_utc_naive()
+    result = db.execute(
+        update(Confirmation)
+        .where(
+            Confirmation.jti == jti,
+            Confirmation.user_id == user_id,
+            Confirmation.status == "PENDING",
+            Confirmation.expires_at > now,
+        )
+        .values(status="DECLINED", consumed_at=now)
+    )
+    db.commit()
+    if result.rowcount == 1:
+        record = db.query(Confirmation).filter(
+            Confirmation.jti == jti,
+            Confirmation.user_id == user_id,
+        ).one()
+        db.add(ActionLog(
+            user_id=user_id,
+            action="confirmation.declined",
+            tool_name=record.tool_name,
+            payload={"confirmation_id": record.id, "jti": record.jti},
+            result_status="success",
+            result_message="User declined the proposed action.",
+        ))
+        db.commit()
+        return True, "Action declined. No operation was executed."
+    record = db.query(Confirmation).filter(
+        Confirmation.jti == jti,
+        Confirmation.user_id == user_id,
+    ).one_or_none()
+    if record is None:
+        return False, "Invalid confirmation."
+    if record.status == "PENDING" and record.expires_at <= now:
+        record.status = "EXPIRED"
+        db.commit()
+        return False, "Confirmation token expired."
+    return False, "Confirmation has already been used or is no longer pending."
