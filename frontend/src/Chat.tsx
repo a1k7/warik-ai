@@ -13,7 +13,7 @@ import ReactMarkdown from 'react-markdown';
 import {
   fetchConversations, createConversation, fetchConversationDetail,
   deleteConversation, sendMessageInConversation, saveFavoriteRestaurant,
-  uploadDocument, sendMessageWithDocument
+  uploadDocument, sendMessageWithDocument, confirmAgentAction, declineAgentAction
 } from './api';
 import { Conversation, Message } from './types';
 
@@ -297,6 +297,7 @@ export const Chat = () => {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [confirmationBusyId, setConfirmationBusyId] = useState<number | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(true);
 
   // Document upload state
@@ -348,7 +349,7 @@ export const Chat = () => {
     try {
       const res = await sendMessageWithDocument(convId, text, activeDoc?.id);
       const newAssistantMsg: Message = {
-        id: Date.now() + 1, role: 'assistant', content: res.reply, structured_data: res.structured_data, created_at: new Date().toISOString()
+        id: Date.now() + 1, role: 'assistant', content: res.reply, structured_data: res.structured_data, needs_confirmation: Boolean(res.needs_confirmation), confirmation_token: res.confirmation_token, pending_tool: res.pending_tool, pending_args: res.pending_args, confirmation_status: res.needs_confirmation ? 'pending' : undefined, created_at: new Date().toISOString()
       };
       setMessages(prev => [...prev, newAssistantMsg]);
       const data = await fetchConversations();
@@ -356,6 +357,50 @@ export const Chat = () => {
     } catch (err) {
       setMessages(prev => [...prev, { id: Date.now() + 1, role: 'assistant', content: 'Error connecting to backend.', created_at: new Date().toISOString() }]);
     } finally { setIsLoading(false); }
+  };
+
+  const handleApprove = async (message: Message) => {
+    if (!message.confirmation_token || confirmationBusyId !== null) return;
+    setConfirmationBusyId(message.id);
+    setMessages(prev => prev.map(item => item.id === message.id ? { ...item, confirmation_status: 'processing' } : item));
+    try {
+      const result = await confirmAgentAction(message.confirmation_token);
+      setMessages(prev => prev.map(item => item.id === message.id ? {
+        ...item,
+        content: result.reply || 'The approved action has completed.',
+        structured_data: result.structured_data as Message['structured_data'],
+        needs_confirmation: false,
+        confirmation_token: undefined,
+        confirmation_status: result.tool_calls?.some(call => !call.success) ? 'failed' : 'approved',
+      } : item));
+    } catch (error: any) {
+      const detail = error?.response?.data?.detail || 'Approval could not be completed. You can retry if the action is still pending.';
+      setMessages(prev => prev.map(item => item.id === message.id ? { ...item, confirmation_status: 'pending' } : item));
+      window.alert(detail);
+    } finally {
+      setConfirmationBusyId(null);
+    }
+  };
+
+  const handleDecline = async (message: Message) => {
+    if (!message.confirmation_token || confirmationBusyId !== null) return;
+    setConfirmationBusyId(message.id);
+    setMessages(prev => prev.map(item => item.id === message.id ? { ...item, confirmation_status: 'processing' } : item));
+    try {
+      await declineAgentAction(message.confirmation_token);
+      setMessages(prev => prev.map(item => item.id === message.id ? {
+        ...item,
+        needs_confirmation: false,
+        confirmation_token: undefined,
+        confirmation_status: 'declined',
+      } : item));
+    } catch (error: any) {
+      const detail = error?.response?.data?.detail || 'The action could not be declined. Please retry.';
+      setMessages(prev => prev.map(item => item.id === message.id ? { ...item, confirmation_status: 'pending' } : item));
+      window.alert(detail);
+    } finally {
+      setConfirmationBusyId(null);
+    }
   };
 
   const handleSend = async (e: React.FormEvent) => {
@@ -454,6 +499,26 @@ export const Chat = () => {
                       <ReactMarkdown>{msg.content}</ReactMarkdown>
                     </div>
                     {msg.structured_data && <ResultCards data={msg.structured_data} />}
+                    {msg.needs_confirmation && msg.confirmation_token && msg.confirmation_status !== 'declined' && msg.confirmation_status !== 'approved' && (
+                      <div className="mt-4 rounded-xl border border-amber-400/40 bg-amber-400/5 p-4" role="group" aria-label="Action approval">
+                        <div className="flex items-start gap-2">
+                          <div className="mt-0.5 rounded-full bg-amber-400/15 p-1.5 text-amber-300"><Check size={15} /></div>
+                          <div className="min-w-0 flex-1">
+                            <p className="text-sm font-semibold text-white">Your approval is required</p>
+                            <p className="mt-1 text-xs text-jmuted">Proposed action: <span className="font-semibold text-jsecondary">{msg.pending_tool || 'Assistant action'}</span></p>
+                            {msg.pending_args && <pre className="mt-2 max-h-32 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-black/20 p-2 text-[11px] text-jmuted">{JSON.stringify(msg.pending_args, null, 2)}</pre>}
+                            <p className="mt-2 text-[11px] text-jmuted">This approval expires after 10 minutes. Nothing is executed until you approve.</p>
+                            <div className="mt-3 flex flex-wrap gap-2">
+                              <button type="button" disabled={confirmationBusyId !== null || msg.confirmation_status === 'processing'} onClick={() => handleApprove(msg)} className="rounded-lg bg-emerald-600 px-4 py-2 text-xs font-bold text-white hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-50">{msg.confirmation_status === 'processing' ? 'Processing…' : 'Approve action'}</button>
+                              <button type="button" disabled={confirmationBusyId !== null || msg.confirmation_status === 'processing'} onClick={() => handleDecline(msg)} className="rounded-lg border border-jmuted/30 px-4 py-2 text-xs font-semibold text-jmuted hover:bg-jmuted/10 disabled:cursor-not-allowed disabled:opacity-50">Decline</button>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                    {msg.confirmation_status === 'approved' && <p className="mt-3 text-xs font-semibold text-emerald-400">✓ Approved and executed</p>}
+                    {msg.confirmation_status === 'declined' && <p className="mt-3 text-xs font-semibold text-jmuted">Action declined. No operation was executed.</p>}
+                    {msg.confirmation_status === 'failed' && <p className="mt-3 text-xs font-semibold text-rose-400">Approval accepted, but the action failed. Check the result above before retrying.</p>}
                   </div>
                 )}
               </div>
