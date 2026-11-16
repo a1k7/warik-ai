@@ -165,3 +165,21 @@ export const swiggyIntegrationApi = {
       '/integrations/swiggy'
     )).data,
 };
+
+
+export interface AgentConfirmationResponse {
+  reply: string;
+  tool_calls: Array<{ tool_name: string; args: Record<string, unknown>; success: boolean; message: string }>;
+  needs_confirmation: boolean;
+  structured_data?: Record<string, unknown> | null;
+}
+
+export const confirmAgentAction = async (confirmationToken: string): Promise<AgentConfirmationResponse> =>
+  (await api.post<AgentConfirmationResponse>('/agent/confirm', {
+    confirmation_token: confirmationToken,
+  }, { timeout: 240000 })).data;
+
+export const declineAgentAction = async (confirmationToken: string): Promise<{ status: string; message: string }> =>
+  (await api.post<{ status: string; message: string }>('/agent/decline', {
+    confirmation_token: confirmationToken,
+  })).data;
