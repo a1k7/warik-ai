@@ -2,7 +2,7 @@
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
-from app.agents.orchestrator import handle_confirm, handle_message
+from app.agents.orchestrator import handle_confirm, handle_decline, handle_message
 from app.api.deps import get_current_user
 from app.database.session import get_db
 from app.models import User, Conversation, Message
@@ -81,6 +81,19 @@ async def post_confirm(
     user: User = Depends(get_current_user),
 ) -> AgentMessageResponse:
     return await handle_confirm(
+        db,
+        user,
+        payload.confirmation_token,
+    )
+
+
+@router.post("/decline")
+async def post_decline(
+    payload: AgentConfirmRequest,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> dict:
+    return await handle_decline(
         db,
         user,
         payload.confirmation_token,
