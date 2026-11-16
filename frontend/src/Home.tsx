@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   ArrowUpRight, Sparkles, Plane, CalendarDays, Wallet, Compass,
-  FileText, ShieldCheck, BrainCircuit, MessageSquareText, Plus,
+  FileText, ShieldCheck, BrainCircuit, MessageSquareText, Plus, ClipboardCheck,
   ArrowUp, Mic, Clock3, CheckCircle2, Utensils
 } from 'lucide-react';
 import { fetchCurrentUser } from './api';
@@ -79,6 +79,7 @@ export const Home = () => {
         <div className="wh-work-panel">
           <div className="wh-section-head"><div><span>YOUR WORKSPACE</span><h2>One assistant. Connected workflows.</h2></div></div>
           <div className="wh-work-grid">
+            <button onClick={() => navigate('/ledger')}><span className="wh-mini-icon"><ClipboardCheck size={17}/></span><span><strong>Action Ledger</strong><small>Track commitments through verified outcomes</small></span><ArrowUpRight size={15}/></button>
             <button onClick={() => navigate('/tasks')}><span className="wh-mini-icon"><CheckCircle2 size={17}/></span><span><strong>Tasks & reminders</strong><small>Keep plans and follow-ups moving</small></span><ArrowUpRight size={15}/></button>
             <button onClick={() => navigate('/travel')}><span className="wh-mini-icon"><Compass size={17}/></span><span><strong>Travel planning</strong><small>Turn trip ideas into itineraries</small></span><ArrowUpRight size={15}/></button>
             <button onClick={() => navigate('/expenses')}><span className="wh-mini-icon"><Wallet size={17}/></span><span><strong>Personal finances</strong><small>Track expenses and budgets</small></span><ArrowUpRight size={15}/></button>
