@@ -1164,3 +1164,10 @@ button { cursor: pointer; }
 .memory-item-actions button:hover{color:var(--warik-accent);border-color:var(--warik-accent)}
 .memory-clear{display:block;margin:15px 0 0 auto;border:0;background:transparent;color:#b65a5a;font-size:9px;font-weight:750;cursor:pointer}
 @media(max-width:560px){.memory-header{align-items:flex-start}.memory-count{padding:8px 10px}.memory-form-bottom{align-items:stretch;flex-direction:column}.memory-category{width:100%}.memory-form-actions{justify-content:flex-end}.memory-item{padding:12px}}
+
+/* Action Ledger controls */
+.record-actions{display:flex;align-items:center;gap:8px;flex:0 0 auto}
+.record-actions select{max-width:132px;border:1px solid var(--warik-line);border-radius:9px;background:var(--warik-bg);color:var(--warik-ink);padding:8px;font:600 10px 'DM Sans',sans-serif;text-transform:capitalize}
+.record-actions select:focus{outline:2px solid var(--warik-accent);outline-offset:2px}
+.record-meta .priority{text-transform:capitalize}
+@media(max-width:640px){.record-card{align-items:flex-start}.record-actions{flex-direction:column;align-items:flex-end}.record-actions select{max-width:112px}}
