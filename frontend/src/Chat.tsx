@@ -407,6 +407,7 @@ export const Chat = () => {
         ...item,
         structured_data: {
           ...(item.structured_data || {}),
+          type: item.structured_data?.type ?? 'commitment_proposal',
           commitment_proposal: { ...proposal, saved: true },
         },
       } : item));
