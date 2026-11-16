@@ -1171,3 +1171,38 @@ button { cursor: pointer; }
 .record-actions select:focus{outline:2px solid var(--warik-accent);outline-offset:2px}
 .record-meta .priority{text-transform:capitalize}
 @media(max-width:640px){.record-card{align-items:flex-start}.record-actions{flex-direction:column;align-items:flex-end}.record-actions select{max-width:112px}}
+
+
+/* India-first voice capture: a focused, review-before-send interaction. */
+.warik-voice-trigger { color:var(--warik-accent);border-color:var(--warik-line);background:var(--warik-lilac); }
+.warik-voice-trigger:hover { border-color:var(--warik-accent);background:color-mix(in srgb,var(--warik-lilac) 70%,white); }
+.warik-voice-backdrop { position:fixed;inset:0;z-index:1000;display:grid;place-items:center;padding:18px;background:rgba(22,17,33,.58);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px); }
+.warik-voice-panel { position:relative;width:min(100%,510px);max-height:min(92dvh,820px);overflow-y:auto;padding:34px 34px 25px;border:1px solid var(--warik-line);border-radius:27px;background:var(--warik-surface-solid);color:var(--warik-ink);box-shadow:0 28px 90px rgba(19,12,36,.28);text-align:center; }
+.warik-voice-close { position:absolute;top:17px;right:17px;width:34px;height:34px;display:grid;place-items:center;border:1px solid var(--warik-line);border-radius:11px;background:var(--warik-bg);color:var(--warik-muted); }
+.warik-voice-kicker { margin:5px 0 11px;color:var(--warik-accent);font-size:9px;font-weight:800;letter-spacing:.2em; }
+.warik-voice-panel h2 { margin:0;color:var(--warik-ink);font:800 clamp(23px,5vw,30px) Manrope,sans-serif;letter-spacing:-.045em; }
+.warik-voice-subtitle { max-width:360px;margin:10px auto 0;color:var(--warik-muted);font-size:12px;line-height:1.65; }
+.warik-voice-orb { display:grid;place-items:center;height:170px;margin:14px 0 4px; }
+.warik-voice-orb .orb-lg { width:150px;height:150px; }
+.warik-voice-status { display:flex;justify-content:center;align-items:center;gap:10px;margin:0 0 20px;color:var(--warik-ink);font-size:12px;font-weight:750; }
+.warik-voice-time { padding:5px 9px;border-radius:999px;background:var(--warik-lilac);color:var(--warik-accent);font-variant-numeric:tabular-nums; }
+.warik-voice-language,.warik-voice-transcript { display:grid;gap:7px;text-align:left;margin:0 0 14px; }
+.warik-voice-language span,.warik-voice-transcript span { color:var(--warik-muted);font-size:10px;font-weight:750; }
+.warik-voice-language select,.warik-voice-transcript textarea { width:100%;padding:12px 13px;border:1px solid var(--warik-line);border-radius:12px;outline:none;background:var(--warik-bg);color:var(--warik-ink);font:500 12px 'DM Sans',sans-serif; }
+.warik-voice-language select:focus,.warik-voice-transcript textarea:focus { border-color:var(--warik-accent); }
+.warik-voice-transcript textarea { min-height:88px;resize:vertical;line-height:1.6; }
+.warik-voice-error { margin:0 0 14px;padding:10px 12px;border-radius:11px;background:#fff0f1;color:#a7354a;font-size:11px;line-height:1.5;text-align:left; }
+.warik-voice-actions { display:flex;justify-content:center;gap:9px;margin-top:7px; }
+.warik-voice-primary,.warik-voice-secondary { min-height:43px;display:inline-flex;align-items:center;justify-content:center;gap:8px;padding:0 18px;border-radius:12px;font-size:11px;font-weight:800;transition:transform .15s,background .15s; }
+.warik-voice-primary { border:0;background:var(--warik-accent);color:white;box-shadow:0 7px 18px color-mix(in srgb,var(--warik-accent) 24%,transparent); }
+.warik-voice-primary:hover:not(:disabled) { transform:translateY(-1px); }
+.warik-voice-primary:disabled { opacity:.65; }
+.warik-voice-primary.is-recording { background:#c94f69; }
+.warik-voice-secondary { border:1px solid var(--warik-line);background:var(--warik-bg);color:var(--warik-muted); }
+.warik-voice-privacy { max-width:390px;margin:17px auto 0;color:var(--warik-muted);font-size:9px;line-height:1.6; }
+@media(max-width:540px) {
+  .warik-voice-backdrop { padding:10px;align-items:end; }
+  .warik-voice-panel { width:100%;max-height:94dvh;padding:29px 21px 20px;border-radius:24px 24px 16px 16px; }
+  .warik-voice-orb { height:150px;margin:9px 0 0; }
+  .warik-voice-orb .orb-lg { width:132px;height:132px; }
+}

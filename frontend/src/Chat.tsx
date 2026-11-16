@@ -3,7 +3,7 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import {
   ArrowLeft, Send, MapPin, Plane, Building2, Car, Calendar, Star,
   Utensils, Bookmark, Map, Plus, Trash2, Menu, X, MessageSquare,
-  Check, ExternalLink, Paperclip, Loader2
+  Check, ExternalLink, Paperclip, Loader2, Mic, Square
 } from 'lucide-react';
 import { AIOrb } from './AIOrb';
 import { TripResultCard } from './components/TripResultCard';
@@ -13,7 +13,7 @@ import ReactMarkdown from 'react-markdown';
 import {
   fetchConversations, createConversation, fetchConversationDetail,
   deleteConversation, sendMessageInConversation, saveFavoriteRestaurant,
-  uploadDocument, sendMessageWithDocument, confirmAgentAction, declineAgentAction, commitmentsApi
+  uploadDocument, sendMessageWithDocument, confirmAgentAction, declineAgentAction, commitmentsApi, voiceApi
 } from './api';
 import { Conversation, Message } from './types';
 
@@ -329,6 +329,20 @@ export const Chat = () => {
   const [uploading, setUploading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  // Voice audio is only transcribed here; the user reviews it before it is sent.
+  const [voiceOpen, setVoiceOpen] = useState(false);
+  const [voiceState, setVoiceState] = useState<'idle' | 'recording' | 'transcribing'>('idle');
+  const [voiceLanguage, setVoiceLanguage] = useState('hi-IN');
+  const [voiceTranscript, setVoiceTranscript] = useState('');
+  const [voiceError, setVoiceError] = useState('');
+  const [recordingSeconds, setRecordingSeconds] = useState(0);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const mediaStreamRef = useRef<MediaStream | null>(null);
+  const audioChunksRef = useRef<BlobPart[]>([]);
+  const recordingStartedAtRef = useRef(0);
+  const recordingTimerRef = useRef<number | null>(null);
+  const discardRecordingRef = useRef(false);
+
   const bottomRef = useRef<HTMLDivElement>(null);
   const hasProcessedInitialMsg = useRef(false);
 
@@ -513,6 +527,139 @@ export const Chat = () => {
     }
   };
 
+
+  const clearRecordingTimer = () => {
+    if (recordingTimerRef.current !== null) {
+      window.clearInterval(recordingTimerRef.current);
+      recordingTimerRef.current = null;
+    }
+  };
+
+  const releaseMicrophone = () => {
+    mediaStreamRef.current?.getTracks().forEach(track => track.stop());
+    mediaStreamRef.current = null;
+    mediaRecorderRef.current = null;
+  };
+
+  const startVoiceRecording = async () => {
+    setVoiceError('');
+    setVoiceTranscript('');
+    setRecordingSeconds(0);
+    discardRecordingRef.current = false;
+
+    if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === 'undefined') {
+      setVoiceError('Voice recording is not supported in this browser. Use a current browser over HTTPS.');
+      return;
+    }
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+      });
+      mediaStreamRef.current = stream;
+
+      const supportedTypes = [
+        'audio/webm;codecs=opus',
+        'audio/mp4',
+        'audio/ogg;codecs=opus',
+        'audio/webm',
+      ];
+      const mimeType = supportedTypes.find(type => MediaRecorder.isTypeSupported(type));
+      const recorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
+      mediaRecorderRef.current = recorder;
+      audioChunksRef.current = [];
+      recordingStartedAtRef.current = Date.now();
+
+      recorder.ondataavailable = event => {
+        if (event.data.size > 0) audioChunksRef.current.push(event.data);
+      };
+      recorder.onerror = () => {
+        clearRecordingTimer();
+        releaseMicrophone();
+        setVoiceState('idle');
+        setVoiceError('The recording was interrupted. Please try again.');
+      };
+      recorder.onstop = async () => {
+        clearRecordingTimer();
+        const duration = Math.max(1, Math.round((Date.now() - recordingStartedAtRef.current) / 1000));
+        const audio = new Blob(audioChunksRef.current, { type: recorder.mimeType || 'audio/webm' });
+        audioChunksRef.current = [];
+        releaseMicrophone();
+
+        if (discardRecordingRef.current) {
+          discardRecordingRef.current = false;
+          setVoiceState('idle');
+          return;
+        }
+        if (!audio.size) {
+          setVoiceState('idle');
+          setVoiceError('No audio was captured. Please try again.');
+          return;
+        }
+
+        setVoiceState('transcribing');
+        try {
+          const result = await voiceApi.transcribe(audio, voiceLanguage, duration);
+          setVoiceTranscript(result.transcript.trim());
+          if (!result.transcript.trim()) setVoiceError('I could not hear any words. Please record again.');
+        } catch (error: any) {
+          const detail = error?.response?.data?.detail;
+          setVoiceError(typeof detail === 'string' ? detail : 'Transcription failed. Check your connection and voice setup, then try again.');
+        } finally {
+          setVoiceState('idle');
+        }
+      };
+
+      recorder.start(250);
+      setVoiceState('recording');
+      recordingTimerRef.current = window.setInterval(() => {
+        const elapsed = Math.floor((Date.now() - recordingStartedAtRef.current) / 1000);
+        setRecordingSeconds(elapsed);
+        if (elapsed >= 28 && mediaRecorderRef.current?.state === 'recording') {
+          mediaRecorderRef.current.stop();
+        }
+      }, 500);
+    } catch (error: any) {
+      releaseMicrophone();
+      const denied = error?.name === 'NotAllowedError' || error?.name === 'PermissionDeniedError';
+      setVoiceError(denied
+        ? 'Microphone access is blocked. Allow microphone permission in your browser settings and try again.'
+        : 'Could not access the microphone. Check that one is connected and try again.');
+    }
+  };
+
+  const stopVoiceRecording = () => {
+    if (mediaRecorderRef.current?.state === 'recording') mediaRecorderRef.current.stop();
+  };
+
+  const closeVoiceMode = () => {
+    if (mediaRecorderRef.current?.state === 'recording') {
+      discardRecordingRef.current = true;
+      mediaRecorderRef.current.stop();
+    } else {
+      clearRecordingTimer();
+      releaseMicrophone();
+    }
+    setVoiceOpen(false);
+    setVoiceState('idle');
+    setVoiceTranscript('');
+    setVoiceError('');
+  };
+
+  const useVoiceTranscript = () => {
+    setInput(voiceTranscript);
+    setVoiceOpen(false);
+    setVoiceTranscript('');
+    setVoiceError('');
+  };
+
+  useEffect(() => () => {
+    discardRecordingRef.current = true;
+    clearRecordingTimer();
+    if (mediaRecorderRef.current?.state === 'recording') mediaRecorderRef.current.stop();
+    releaseMicrophone();
+  }, []);
+
   return (
     <div className="warik-chat flex h-[100dvh] bg-jbg w-full overflow-hidden relative">
       {/* SIDEBAR */}
@@ -638,6 +785,16 @@ export const Chat = () => {
               {uploading ? <Loader2 size={18} className="animate-spin text-jprimary" /> : <Paperclip size={18} />}
             </button>
 
+            <button
+              type="button"
+              onClick={() => { setVoiceOpen(true); setVoiceError(''); setVoiceTranscript(''); }}
+              disabled={isLoading || uploading}
+              className="warik-voice-trigger w-12 h-12 shrink-0 rounded-xl border flex items-center justify-center transition-colors disabled:opacity-50"
+              title="Talk to Warik"
+              aria-label="Open voice mode"
+            >
+              <Mic size={18} />
+            </button>
             <input
               type="text"
               value={input}
@@ -656,6 +813,66 @@ export const Chat = () => {
           </form>
         </div>
       </div>
+
+
+      {voiceOpen && (
+        <div className="warik-voice-backdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget && voiceState !== 'transcribing') closeVoiceMode(); }}>
+          <section className="warik-voice-panel" role="dialog" aria-modal="true" aria-labelledby="warik-voice-title">
+            <button type="button" className="warik-voice-close" onClick={closeVoiceMode} aria-label="Close voice mode" disabled={voiceState === 'transcribing'}><X size={18} /></button>
+            <p className="warik-voice-kicker">WARIK · VOICE</p>
+            <h2 id="warik-voice-title">Say what you need. Stay in control.</h2>
+            <p className="warik-voice-subtitle">Speak naturally in your language. Check the words, edit anything unclear, then send.</p>
+
+            <div className="warik-voice-orb">
+              <AIOrb state={voiceState === 'recording' ? 'listening' : voiceState === 'transcribing' ? 'thinking' : 'idle'} size="lg" />
+            </div>
+
+            <div className="warik-voice-status" aria-live="polite">
+              {voiceState === 'recording' ? 'Listening…' : voiceState === 'transcribing' ? 'Understanding your words…' : voiceTranscript ? 'Transcript ready for review' : 'Ready when you are'}
+              {voiceState === 'recording' && <span className="warik-voice-time">{String(Math.floor(recordingSeconds / 60)).padStart(2, '0')}:{String(recordingSeconds % 60).padStart(2, '0')}</span>}
+            </div>
+
+            <label className="warik-voice-language">
+              <span>Speaking language</span>
+              <select value={voiceLanguage} onChange={event => setVoiceLanguage(event.target.value)} disabled={voiceState !== 'idle' || Boolean(voiceTranscript)}>
+                <option value="hi-IN">Hindi · हिन्दी</option>
+                <option value="en-IN">English · India</option>
+                <option value="mr-IN">Marathi · मराठी</option>
+                <option value="gu-IN">Gujarati · ગુજરાતી</option>
+                <option value="bn-IN">Bengali · বাংলা</option>
+                <option value="kn-IN">Kannada · ಕನ್ನಡ</option>
+                <option value="ml-IN">Malayalam · മലയാളം</option>
+                <option value="pa-IN">Punjabi · ਪੰਜਾਬੀ</option>
+                <option value="ta-IN">Tamil · தமிழ்</option>
+                <option value="te-IN">Telugu · తెలుగు</option>
+              </select>
+            </label>
+
+            {voiceError && <p className="warik-voice-error" role="alert">{voiceError}</p>}
+
+            {voiceTranscript && (
+              <label className="warik-voice-transcript">
+                <span>Review and edit your words</span>
+                <textarea value={voiceTranscript} onChange={event => setVoiceTranscript(event.target.value)} rows={3} />
+              </label>
+            )}
+
+            <div className="warik-voice-actions">
+              {voiceState === 'recording' ? (
+                <button type="button" className="warik-voice-primary is-recording" onClick={stopVoiceRecording}><Square size={15} fill="currentColor" /> Stop recording</button>
+              ) : voiceState === 'transcribing' ? (
+                <button type="button" className="warik-voice-primary" disabled><Loader2 size={16} className="animate-spin" /> Transcribing</button>
+              ) : voiceTranscript ? (
+                <button type="button" className="warik-voice-primary" onClick={useVoiceTranscript} disabled={!voiceTranscript.trim()}><Check size={16} /> Use transcript</button>
+              ) : (
+                <button type="button" className="warik-voice-primary" onClick={startVoiceRecording}><Mic size={17} /> Start speaking</button>
+              )}
+              {voiceState !== 'transcribing' && <button type="button" className="warik-voice-secondary" onClick={closeVoiceMode}>Cancel</button>}
+            </div>
+            <p className="warik-voice-privacy">Up to 28 seconds per recording. Audio goes to your configured speech provider for transcription; the assistant receives nothing until you review and send.</p>
+          </section>
+        </div>
+      )}
     </div>
   );
 };

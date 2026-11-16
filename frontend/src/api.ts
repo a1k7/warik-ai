@@ -38,6 +38,30 @@ export const fetchCurrentUser = async (): Promise<CurrentUser> =>
   (await api.get<CurrentUser>('/auth/me')).data;
 export const saveFavoriteRestaurant = async (name: string, location: string) => (await api.post('/food/favorites', { name, location })).data;
 
+
+export interface VoiceTranscriptionResponse {
+  transcript: string;
+  request_id?: string | null;
+  language_code: string;
+  usage_seconds_used: number;
+  usage_seconds_limit: number;
+}
+
+export const voiceApi = {
+  transcribe: async (audio: Blob, languageCode: string, durationSeconds: number) => {
+    const form = new FormData();
+    const mimeType = audio.type || 'audio/webm';
+    const extension = mimeType.includes('mp4') ? 'm4a' : mimeType.includes('ogg') ? 'ogg' : 'webm';
+    form.append('audio', audio, `warik-voice.${extension}`);
+    form.append('language_code', languageCode);
+    form.append('duration_seconds', String(durationSeconds));
+    const response = await api.post<VoiceTranscriptionResponse>('/voice/transcribe', form, {
+      timeout: 120000,
+    });
+    return response.data;
+  },
+};
+
 export const fetchConversations = async () => (await api.get('/conversations')).data;
 export const createConversation = async () => (await api.post('/conversations', { title: 'New Chat' })).data;
 export const fetchConversationDetail = async (id: number) => (await api.get(`/conversations/${id}`)).data;
