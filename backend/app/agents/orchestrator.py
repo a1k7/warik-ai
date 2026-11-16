@@ -1,7 +1,8 @@
 
 """Warik AI orchestrator — strict routing, no state leaks."""
 
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, time, timedelta, timezone
+from zoneinfo import ZoneInfo
 import re
 import jwt
 import logging
@@ -241,8 +242,96 @@ def _build_confirmation_response(
     )
 
 
+_COMMITMENT_TZ = ZoneInfo("Asia/Kolkata")
+_COMMITMENT_DEADLINE_RE = re.compile(
+    r"\b(?:by|before|on|due(?:\s+date)?|no later than)\s+"
+    r"((?:next\s+)?(?:today|tomorrow|tonight|monday|tuesday|wednesday|"
+    r"thursday|friday|saturday|sunday)|"
+    r"\d{4}-\d{2}-\d{2}|"
+    r"\d{1,2}(?:st|nd|rd|th)?\s+[a-zA-Z]{3,}(?:\s+\d{4})?|"
+    r"[a-zA-Z]{3,}\s+\d{1,2}(?:st|nd|rd|th)?(?:\s+\d{4})?)\b",
+    re.IGNORECASE,
+)
+
+
+def _extract_commitment_deadline(
+    text: str,
+    now: datetime | None = None,
+) -> str | None:
+    """Resolve explicit common deadline phrases in the app's India timezone."""
+    now = now or datetime.now(_COMMITMENT_TZ)
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=_COMMITMENT_TZ)
+
+    match = _COMMITMENT_DEADLINE_RE.search(text)
+    if not match:
+        return None
+
+    phrase = match.group(1).lower().strip()
+    today = now.astimezone(_COMMITMENT_TZ).date()
+    weekdays = {
+        "monday": 0, "tuesday": 1, "wednesday": 2, "thursday": 3,
+        "friday": 4, "saturday": 5, "sunday": 6,
+    }
+
+    try:
+        if phrase in ("today", "tonight"):
+            due_date = today
+        elif phrase == "tomorrow":
+            due_date = today + timedelta(days=1)
+        else:
+            weekday_phrase = phrase.removeprefix("next ").strip()
+            if weekday_phrase in weekdays:
+                delta = (weekdays[weekday_phrase] - today.weekday()) % 7
+                if phrase.startswith("next ") and delta == 0:
+                    delta = 7
+                due_date = today + timedelta(days=delta)
+            else:
+                parsed: date | None = None
+                try:
+                    parsed = date.fromisoformat(phrase)
+                except ValueError:
+                    parsed = None
+
+                if parsed is None:
+                    numeric_first = re.fullmatch(
+                        r"(\d{1,2})(?:st|nd|rd|th)?\s+([a-zA-Z]+)(?:\s+(\d{4}))?",
+                        phrase,
+                    )
+                    month_first = re.fullmatch(
+                        r"([a-zA-Z]+)\s+(\d{1,2})(?:st|nd|rd|th)?(?:\s+(\d{4}))?",
+                        phrase,
+                    )
+                    if numeric_first:
+                        day = int(numeric_first.group(1))
+                        month_name = numeric_first.group(2)[:3].lower()
+                        year = int(numeric_first.group(3)) if numeric_first.group(3) else today.year
+                    elif month_first:
+                        month_name = month_first.group(1)[:3].lower()
+                        day = int(month_first.group(2))
+                        year = int(month_first.group(3)) if month_first.group(3) else today.year
+                    else:
+                        return None
+                    months = {
+                        "jan": 1, "feb": 2, "mar": 3, "apr": 4,
+                        "may": 5, "jun": 6, "jul": 7, "aug": 8,
+                        "sep": 9, "oct": 10, "nov": 11, "dec": 12,
+                    }
+                    parsed = date(year, months[month_name], day)
+                    if not numeric_first.group(3) if numeric_first else not month_first.group(3):
+                        if parsed < today:
+                            parsed = date(year + 1, parsed.month, parsed.day)
+                due_date = parsed
+    except (ValueError, TypeError):
+        return None
+
+    # Date-only commitments are represented as end-of-day, not midnight.
+    due_at = datetime.combine(due_date, time(23, 59), tzinfo=_COMMITMENT_TZ)
+    return due_at.isoformat()
+
+
 def _extract_commitment_proposal(text: str) -> dict | None:
-    """Detect only explicit first-person commitments; never create records here."""
+    """Detect explicit first-person actions and preserve a named person/deadline."""
     match = re.search(
         r"\b(?:i(?:'ll| will| need to)|remind me to|don't let me forget to)\s+"
         r"([a-z][a-z0-9 ,'-]{3,179})",
@@ -252,39 +341,77 @@ def _extract_commitment_proposal(text: str) -> dict | None:
     if not match:
         return None
 
-    clause = re.split(r"[.!?;\n]", match.group(1), maxsplit=1)[0].strip(" ,")
-    clause = re.sub(
-        r"\s+\b(?:by|before|on|at)\s+"
-        r"(?:today|tomorrow|tonight|monday|tuesday|wednesday|thursday|friday|saturday|sunday|"
-        r"\d{4}-\d{2}-\d{2}|next\s+\w+).*$",
-        "",
-        clause,
-        flags=re.IGNORECASE,
-    ).strip(" ,")
+    original_clause = re.split(r"[.!?;\n]", match.group(1), maxsplit=1)[0].strip(" ,")
+    deadline_match = _COMMITMENT_DEADLINE_RE.search(original_clause)
+    due_at = _extract_commitment_deadline(text)
+    clause = original_clause
+    if deadline_match:
+        clause = clause[:deadline_match.start()].strip(" ,")
+
     if not clause or len(clause) < 5:
         return None
 
-    first_word = clause.split()[0].lower()
     allowed_actions = {
         "send", "submit", "finish", "complete", "call", "email", "message",
         "meet", "prepare", "review", "share", "pay", "book", "schedule",
         "upload", "download", "apply", "ask", "contact", "follow", "check",
         "buy", "collect", "deliver", "write", "create", "build", "fix",
-        "study", "attend", "discuss", "renew", "cancel", "return",
+        "study", "attend", "discuss", "renew", "cancel", "return", "tell",
+        "forward", "give",
     }
-    if first_word not in allowed_actions:
+
+    counterparty = None
+    title_clause = clause
+    recipient = re.match(
+        r"^(?P<verb>(?i:send|email|message|call|meet|ask|contact|tell|share|forward|give))"
+        r"\s+(?P<person>[A-Z][a-z][a-z'-]{1,30})(?:\s+(?P<object>.+))?$",
+        clause,
+    )
+    follow_up = re.match(
+        r"^(?i:follow\s+up\s+with)\s+(?P<person>[A-Z][a-z][a-z'-]{1,30})"
+        r"(?:\s+(?P<object>.+))?$",
+        clause,
+    )
+    person_match = recipient or follow_up
+    if person_match:
+        counterparty = person_match.group("person")
+        verb = person_match.groupdict().get("verb") or "Follow up"
+        object_text = (person_match.groupdict().get("object") or "").strip()
+        title_clause = f"{verb} {object_text}".strip()
+
+    first_word = title_clause.split()[0].lower() if title_clause else ""
+    if first_word not in allowed_actions and first_word not in {"follow"}:
         return None
 
-    title = clause[0].upper() + clause[1:]
+    title = title_clause[0].upper() + title_clause[1:]
     if len(title) > 200:
         title = title[:197].rstrip() + "..."
+
     return {
         "type": "commitment_proposal",
         "title": title,
-        "details": "Detected in this conversation. Review and edit before saving.",
+        "details": f"Detected from this conversation: {text.strip()[:450]}",
+        "counterparty": counterparty,
+        "due_at": due_at,
         "source": "conversation",
+        "timezone": "Asia/Kolkata" if due_at else None,
     }
 
+
+def _build_llm_messages(conversation: Conversation, current_text: str) -> list[dict]:
+    """Avoid repeating the current user message when it is already persisted."""
+    history = list(conversation.messages or [])
+    if (
+        history
+        and history[-1].role == "user"
+        and (history[-1].content or "").strip() == current_text.strip()
+    ):
+        history = history[:-1]
+
+    return [
+        {"role": message.role, "content": message.content}
+        for message in history
+    ] + [{"role": "user", "content": current_text}]
 
 def _attach_commitment_proposal(
     response: AgentMessageResponse,
@@ -1096,11 +1223,7 @@ async def handle_message(
 
     # 10. LLM FALLBACK
     llm_reply = await provider.synthesize(
-        [
-            {"role": message.role, "content": message.content}
-            for message in conversation.messages
-        ]
-        + [{"role": "user", "content": text}],
+        _build_llm_messages(conversation, text),
         tool_context="No tools used. Answer the user's question directly.",
     )
 
