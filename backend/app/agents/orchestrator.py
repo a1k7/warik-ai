@@ -332,7 +332,10 @@ def _extract_commitment_deadline(
     return due_at.isoformat()
 
 
-def _extract_commitment_proposal(text: str) -> dict | None:
+def _extract_commitment_proposal(
+    text: str,
+    now: datetime | None = None,
+) -> dict | None:
     """Detect explicit first-person actions and preserve a named person/deadline."""
     match = re.search(
         r"\b(?:i(?:'ll| will| need to)|remind me to|don't let me forget to)\s+"
@@ -345,7 +348,7 @@ def _extract_commitment_proposal(text: str) -> dict | None:
 
     original_clause = re.split(r"[.!?;\n]", match.group(1), maxsplit=1)[0].strip(" ,")
     deadline_match = _COMMITMENT_DEADLINE_RE.search(original_clause)
-    due_at = _extract_commitment_deadline(text)
+    due_at = _extract_commitment_deadline(text, now=now)
     clause = original_clause
     if deadline_match:
         clause = clause[:deadline_match.start()].strip(" ,")
