@@ -1,6 +1,7 @@
 from app.agents.orchestrator import (
     _attach_commitment_proposal,
     _extract_commitment_proposal,
+    _extract_commitment_deadline,
 )
 from app.schemas.agent import AgentMessageResponse
 
