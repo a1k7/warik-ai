@@ -85,3 +85,110 @@ def delete_commitment(
     item = _owned(db, commitment_id, user)
     db.delete(item)
     db.commit()
+
+
+
+@router.get("/briefing")
+def get_commitment_briefing(
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """Return deterministic attention signals from the user's open commitments."""
+    from datetime import timedelta
+    from zoneinfo import ZoneInfo
+
+    local_tz = ZoneInfo("Asia/Kolkata")
+    now = datetime.now(local_tz)
+    horizon = now + timedelta(hours=48)
+    items = (
+        db.query(Commitment)
+        .filter(Commitment.user_id == user.id, Commitment.status != "completed")
+        .order_by(Commitment.due_at.asc(), Commitment.created_at.asc())
+        .all()
+    )
+
+    attention = []
+    counts = {
+        "active": len(items),
+        "overdue": 0,
+        "due_today": 0,
+        "due_soon": 0,
+        "waiting": 0,
+        "blocked": 0,
+    }
+
+    for item in items:
+        signals = []
+        due = item.due_at
+        if due is not None:
+            if due.tzinfo is None:
+                # SQLite may return naive timestamps; commitment deadlines are
+                # entered in the app's configured India timezone.
+                due = due.replace(tzinfo=local_tz)
+            else:
+                due = due.astimezone(local_tz)
+
+            if due < now:
+                signals.append("overdue")
+                counts["overdue"] += 1
+            elif due.date() == now.date():
+                signals.append("due_today")
+                counts["due_today"] += 1
+            elif due <= horizon:
+                signals.append("due_soon")
+                counts["due_soon"] += 1
+
+        if item.status == "waiting":
+            signals.append("waiting")
+            counts["waiting"] += 1
+        elif item.status == "blocked":
+            signals.append("blocked")
+            counts["blocked"] += 1
+
+        if not signals:
+            continue
+
+        if item.status == "waiting" and item.counterparty:
+            next_step = f"Follow up with {item.counterparty} about this commitment."
+        elif item.status == "blocked":
+            next_step = "Identify and resolve the blocker before the deadline."
+        elif "overdue" in signals:
+            next_step = "Review the delay and set a realistic next date."
+        elif "due_today" in signals:
+            next_step = "Give this commitment attention today."
+        else:
+            next_step = "Move this commitment forward before it becomes urgent."
+
+        attention.append({
+            "id": item.id,
+            "title": item.title,
+            "status": item.status,
+            "counterparty": item.counterparty,
+            "due_at": due.isoformat() if due else None,
+            "signals": signals,
+            "suggested_next_step": next_step,
+        })
+
+    priority = {"overdue": 0, "blocked": 1, "due_today": 2, "waiting": 3, "due_soon": 4}
+    attention.sort(
+        key=lambda entry: min(priority.get(signal, 9) for signal in entry["signals"])
+    )
+    attention = attention[:8]
+
+    signal_total = sum(counts[key] for key in ("overdue", "due_today", "due_soon", "waiting", "blocked"))
+    if not items:
+        headline = "Your Action Ledger is clear. Capture a commitment when something needs follow-through."
+    elif not attention:
+        headline = "No commitments need immediate attention. Keep moving your active work forward."
+    else:
+        headline = f"{len(attention)} commitment(s) need attention. Start with the highest-priority signal below."
+
+    return {
+        "generated_at": now.isoformat(),
+        "timezone": "Asia/Kolkata",
+        "headline": headline,
+        "counts": counts,
+        "attention_items": attention,
+        "has_attention": bool(attention),
+        "signal_count": signal_total,
+    }
