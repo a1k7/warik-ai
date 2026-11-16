@@ -39,3 +39,28 @@ def test_resume_requires_explicit_unambiguous_command():
     assert is_resume_request("Please proceed with remaining steps")
     assert not is_resume_request("continue but make it cheaper")
     assert not is_resume_request("yes")
+
+
+def test_latest_user_message_is_included_once_when_already_persisted():
+    current = "I'll send Rahul the project report by Friday."
+    conversation = SimpleNamespace(
+        state_json={"conversation_context": {"latest_user_message": current}},
+        messages=[SimpleNamespace(role="user", content=current)],
+    )
+    result = build_conversation_context(conversation, current)
+    assert result.count(current) == 1
+    assert "Previous task request:" not in result
+
+
+def test_previous_request_is_not_duplicated_in_recent_history():
+    conversation = SimpleNamespace(
+        state_json={"conversation_context": {"latest_user_message": "Plan Tokyo"}},
+        messages=[
+            SimpleNamespace(role="user", content="Plan Tokyo"),
+            SimpleNamespace(role="assistant", content="How many days?"),
+            SimpleNamespace(role="user", content="Make it cheaper"),
+        ],
+    )
+    result = build_conversation_context(conversation, "Make it cheaper")
+    assert result.count("Plan Tokyo") == 1
+    assert result.count("Make it cheaper") == 1
