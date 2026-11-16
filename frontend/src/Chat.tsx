@@ -26,7 +26,13 @@ const ResultCards = ({ data, onSaveCommitment, savingCommitment }: { data: any; 
       <div className="mt-4 rounded-xl border border-jprimary/40 bg-jprimary/5 p-4">
         <p className="text-xs font-bold uppercase tracking-wide text-jsecondary">Possible commitment detected</p>
         <p className="mt-2 text-sm font-semibold text-white">{proposal.title}</p>
-        <p className="mt-1 text-xs text-jmuted">Warik noticed a possible promise in your message. Nothing has been saved yet.</p>
+        {(proposal.counterparty || proposal.due_at) && (
+          <div className="mt-2 flex flex-wrap gap-2 text-xs text-jmuted">
+            {proposal.counterparty && <span>Person: <strong className="text-white">{proposal.counterparty}</strong></span>}
+            {proposal.due_at && <span>Due: <strong className="text-white">{new Date(proposal.due_at).toLocaleString('en-IN', { timeZone: proposal.timezone || 'Asia/Kolkata', dateStyle: 'medium', timeStyle: 'short' })}</strong></span>}
+          </div>
+        )}
+        <p className="mt-1 text-xs text-jmuted">Review the extracted details. Nothing has been saved yet.</p>
         {proposal.saved ? (
           <p className="mt-3 text-xs font-semibold text-emerald-400">✓ Added to your Action Ledger</p>
         ) : (
@@ -401,6 +407,8 @@ export const Chat = () => {
       await commitmentsApi.create({
         title: proposal.title,
         details: proposal.details || undefined,
+        counterparty: proposal.counterparty || undefined,
+        due_at: proposal.due_at || undefined,
         source: 'conversation',
       });
       setMessages(prev => prev.map(item => item.id === message.id ? {
