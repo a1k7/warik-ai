@@ -31,6 +31,7 @@ def test_proposal_is_attached_without_persisting_any_record():
         response,
         "I will email the project supervisor.",
     )
+    assert enriched.structured_data["type"] == "commitment_proposal"
     assert enriched.structured_data["commitment_proposal"]["title"] == (
         "Email the project supervisor"
     )
