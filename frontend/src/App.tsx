@@ -16,6 +16,7 @@ import { Reminders } from './pages/Reminders';
 import { Expenses } from './pages/Expenses';
 import { Travel } from './pages/Travel';
 import { Food } from './pages/Food';
+import { MemoryPage } from './pages/Memory';
 
 import { AppShell } from './components/AppShell';
 import { login, register } from './api';
@@ -146,6 +147,7 @@ function App() {
             <Route path="/travel" element={<Travel />} />
             <Route path="/food" element={<Food />} />
             <Route path="/saved" element={<Saved />} />
+            <Route path="/memory" element={<MemoryPage />} />
             <Route path="/settings" element={<Settings />} />
           </Route>
 
