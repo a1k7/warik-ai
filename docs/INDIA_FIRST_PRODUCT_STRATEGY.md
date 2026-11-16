@@ -10,12 +10,13 @@ A large part of personal administration is not a single complex task. It is the 
 
 Three public signals make this worth investigating:
 
-- **Consumer resolution is a recurring burden.** The Government reported 511,196 e-commerce grievances registered with the National Consumer Helpline in 2025. A separate government update said the helpline facilitated more than ₹52 crore in refunds for 79,521 grievances between 25 April 2025 and 31 January 2026; e-commerce accounted for 47,743 complaints and refunds exceeding ₹36 crore. This shows a measurable complaint-and-follow-up category; it does not prove every complaint is unresolved or that Warik can resolve it automatically.
+- **Consumer resolution is a recurring burden.** The Government reported that the National Consumer Helpline facilitated refunds of more than ₹105 crore across 1,66,189 refund-related grievances in 35 sectors between 25 April 2025 and 31 July 2026; e-commerce accounted for more than ₹74 crore of those facilitated refunds. Separately, NCH recorded 511,196 e-commerce grievances in 2025. These are signals of repeated resolution and follow-up workflows, not proof that every complaint remains unresolved or that Warik can retrieve refund status or resolve claims automatically.
 - **Time is constrained.** India's 2024 Time Use Survey reported that 53.9% of urban residents participated in unpaid domestic services and 24.5% in unpaid caregiving. This is a better framing than calling customers lazy: many people are balancing paid work with household and care responsibilities.
 - **Language affects accessibility.** The IAMAI–Kantar Internet in India 2024 report estimated that 870 million users accessed the internet in Indic languages; 57% of urban internet users preferred Indic-language content. Treat this as support for testing local-language experiences, not as proof that every user wants voice.
 
 ### Sources
 
+- Government of India, National Consumer Helpline refund update, 9 September 2026: https://www.pib.gov.in/PressReleasePage.aspx?PRID=2308386&lang=2&reg=48
 - Government of India, National Consumer Helpline update, 17 February 2026: https://www.pib.gov.in/PressReleasePage.aspx?PRID=2229099&lang=1&reg=1
 - Government of India, Time Use Survey 2024 release: https://www.pib.gov.in/Pressreleaseshare.aspx?PRID=2106113&lang=2&reg=48
 - Department of Consumer Affairs / Lok Sabha response on e-commerce complaints (2025 figure): https://fcainfoweb.nic.in/PMS/writereaddata/2026_LS_B_361.pdf
