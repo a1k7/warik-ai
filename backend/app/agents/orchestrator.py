@@ -318,9 +318,11 @@ def _extract_commitment_deadline(
                         "sep": 9, "oct": 10, "nov": 11, "dec": 12,
                     }
                     parsed = date(year, months[month_name], day)
-                    if not numeric_first.group(3) if numeric_first else not month_first.group(3):
-                        if parsed < today:
-                            parsed = date(year + 1, parsed.month, parsed.day)
+                    has_explicit_year = bool(
+                        numeric_first.group(3) if numeric_first else month_first.group(3)
+                    )
+                    if not has_explicit_year and parsed < today:
+                        parsed = date(year + 1, parsed.month, parsed.day)
                 due_date = parsed
     except (ValueError, TypeError):
         return None
