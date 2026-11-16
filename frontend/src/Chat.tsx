@@ -349,6 +349,10 @@ export const Chat = () => {
   useEffect(() => {
     const init = async () => {
       try {
+        if (location.state?.openVoice) {
+          setVoiceOpen(true);
+          window.history.replaceState({}, document.title);
+        }
         const data = await fetchConversations();
         setConversations(data);
 

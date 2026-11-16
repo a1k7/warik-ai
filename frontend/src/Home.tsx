@@ -30,6 +30,7 @@ export const Home = () => {
   const openChat = (message?: string) => {
     navigate('/chat', message ? { state: { message } } : undefined);
   };
+  const openVoice = () => navigate('/chat', { state: { openVoice: true } });
   const submit = (event: React.FormEvent) => {
     event.preventDefault();
     if (command.trim()) openChat(command.trim());
@@ -56,7 +57,7 @@ export const Home = () => {
         </div>
         <form className="wh-composer" onSubmit={submit}>
           <input value={command} onChange={event => setCommand(event.target.value)} placeholder="Ask Warik anything…" aria-label="Message Warik" />
-          <button type="button" aria-label="Open voice mode" title="Open Warik voice mode" onClick={() => openChat()} className="wh-mic"><Mic size={18}/></button>
+          <button type="button" aria-label="Open voice mode" title="Open Warik voice mode" onClick={openVoice} className="wh-mic"><Mic size={18}/></button>
           <button type="submit" disabled={!command.trim()} aria-label="Send message"><ArrowUp size={19}/></button>
         </form>
         <div className="wh-command-foot"><span><ShieldCheck size={13}/> Actions require your approval</span><span><Sparkles size={13}/> Context-aware assistance</span></div>
