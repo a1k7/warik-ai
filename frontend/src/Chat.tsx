@@ -371,7 +371,7 @@ export const Chat = () => {
         structured_data: result.structured_data as Message['structured_data'],
         needs_confirmation: false,
         confirmation_token: undefined,
-        confirmation_status: result.tool_calls?.some(call => !call.success) ? 'failed' : 'approved',
+        confirmation_status: result.tool_calls?.length && result.tool_calls.every(call => call.success) ? 'approved' : 'failed',
       } : item));
     } catch (error: any) {
       const detail = error?.response?.data?.detail || 'Approval could not be completed. You can retry if the action is still pending.';
