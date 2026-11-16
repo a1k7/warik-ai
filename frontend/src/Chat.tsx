@@ -13,12 +13,30 @@ import ReactMarkdown from 'react-markdown';
 import {
   fetchConversations, createConversation, fetchConversationDetail,
   deleteConversation, sendMessageInConversation, saveFavoriteRestaurant,
-  uploadDocument, sendMessageWithDocument, confirmAgentAction, declineAgentAction
+  uploadDocument, sendMessageWithDocument, confirmAgentAction, declineAgentAction, commitmentsApi
 } from './api';
 import { Conversation, Message } from './types';
 
-const ResultCards = ({ data }: { data: any }) => {
+const ResultCards = ({ data, onSaveCommitment, savingCommitment }: { data: any; onSaveCommitment?: (proposal: any) => void; savingCommitment?: boolean }) => {
   if (!data) return null;
+
+  if (data.commitment_proposal) {
+    const proposal = data.commitment_proposal;
+    return (
+      <div className="mt-4 rounded-xl border border-jprimary/40 bg-jprimary/5 p-4">
+        <p className="text-xs font-bold uppercase tracking-wide text-jsecondary">Possible commitment detected</p>
+        <p className="mt-2 text-sm font-semibold text-white">{proposal.title}</p>
+        <p className="mt-1 text-xs text-jmuted">Warik noticed a possible promise in your message. Nothing has been saved yet.</p>
+        {proposal.saved ? (
+          <p className="mt-3 text-xs font-semibold text-emerald-400">✓ Added to your Action Ledger</p>
+        ) : (
+          <button type="button" disabled={savingCommitment} onClick={() => onSaveCommitment?.(proposal)} className="mt-3 rounded-lg bg-jprimary px-4 py-2 text-xs font-bold text-white disabled:opacity-50">
+            {savingCommitment ? 'Saving…' : 'Add to Action Ledger'}
+          </button>
+        )}
+      </div>
+    );
+  }
 
   if (data.type === 'trip_summary' || data.type === 'advanced_itinerary') {
     return <TripResultCard data={data as any} />;
@@ -376,6 +394,29 @@ export const Chat = () => {
     } finally { setIsLoading(false); }
   };
 
+  const handleSaveCommitment = async (message: Message, proposal: any) => {
+    if (!proposal?.title || !activeConvId) return;
+    setConfirmationBusyId(message.id);
+    try {
+      await commitmentsApi.create({
+        title: proposal.title,
+        details: proposal.details || undefined,
+        source: 'conversation',
+      });
+      setMessages(prev => prev.map(item => item.id === message.id ? {
+        ...item,
+        structured_data: {
+          ...(item.structured_data || {}),
+          commitment_proposal: { ...proposal, saved: true },
+        },
+      } : item));
+    } catch (error: any) {
+      window.alert(error?.response?.data?.detail || 'Could not add this commitment to the Action Ledger.');
+    } finally {
+      setConfirmationBusyId(null);
+    }
+  };
+
   const handleApprove = async (message: Message) => {
     if (!message.confirmation_token || confirmationBusyId !== null) return;
     setConfirmationBusyId(message.id);
@@ -515,7 +556,7 @@ export const Chat = () => {
                     <div className="prose prose-invert prose-sm max-w-none prose-a:text-jsecondary prose-a:underline prose-strong:text-white prose-p:mb-2 prose-p:last:mb-0">
                       <ReactMarkdown>{msg.content}</ReactMarkdown>
                     </div>
-                    {msg.structured_data && <ResultCards data={msg.structured_data} />}
+                    {msg.structured_data && <ResultCards data={msg.structured_data} onSaveCommitment={(proposal) => handleSaveCommitment(msg, proposal)} savingCommitment={confirmationBusyId === msg.id} />}
                     {msg.needs_confirmation && msg.confirmation_token && msg.confirmation_status !== 'declined' && msg.confirmation_status !== 'approved' && (
                       <div className="mt-4 rounded-xl border border-amber-400/40 bg-amber-400/5 p-4" role="group" aria-label="Action approval">
                         <div className="flex items-start gap-2">
