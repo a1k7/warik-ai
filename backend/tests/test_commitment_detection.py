@@ -12,7 +12,7 @@ def test_explicit_first_person_commitment_is_proposed():
     )
     assert proposal is not None
     assert proposal["type"] == "commitment_proposal"
-    assert proposal["title"] == "Send Rahul the project report"
+    assert proposal["title"] == "Send the project report"
 
 
 def test_reminder_phrase_can_propose_commitment():
