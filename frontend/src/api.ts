@@ -183,3 +183,19 @@ export const declineAgentAction = async (confirmationToken: string): Promise<{ s
   (await api.post<{ status: string; message: string }>('/agent/decline', {
     confirmation_token: confirmationToken,
   })).data;
+
+export type CommitmentStatus = 'open' | 'in_progress' | 'waiting' | 'blocked' | 'completed';
+export interface CommitmentItem {
+  id:number; title:string; details?:string|null; counterparty?:string|null;
+  due_at?:string|null; status:CommitmentStatus; source:string;
+  verification_note?:string|null; verified_at?:string|null;
+  created_at:string; updated_at:string;
+}
+export const commitmentsApi = {
+  list: async () => (await api.get<CommitmentItem[]>('/commitments/')).data,
+  create: async (payload: {title:string; details?:string; counterparty?:string; due_at?:string}) =>
+    (await api.post<CommitmentItem>('/commitments/', payload)).data,
+  update: async (id:number, payload: {status?:CommitmentStatus; verification_note?:string}) =>
+    (await api.patch<CommitmentItem>(`/commitments/${id}`, payload)).data,
+  remove: async (id:number) => { await api.delete(`/commitments/${id}`); },
+};
