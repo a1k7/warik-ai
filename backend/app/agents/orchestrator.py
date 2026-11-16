@@ -33,6 +33,7 @@ from app.services.confirmation_service import (
     create_confirmation,
     consume_confirmation,
     finalize_confirmation,
+    decline_confirmation,
 )
 
 
@@ -1371,6 +1372,34 @@ async def handle_confirm(
         message=response.reply,
     )
     return response
+
+async def handle_decline(db: Session, user: User, token: str) -> dict:
+    """Validate and atomically revoke a pending tool confirmation."""
+    try:
+        payload = jwt.decode(
+            token,
+            settings.jwt_secret,
+            algorithms=[settings.jwt_algorithm],
+        )
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(status_code=400, detail="Confirmation token expired.")
+    except jwt.PyJWTError:
+        raise HTTPException(status_code=400, detail="Invalid token.")
+
+    if str(payload.get("user_id")) != str(user.id):
+        raise HTTPException(status_code=403, detail="Invalid user.")
+    if payload.get("purpose") != "tool_confirmation" or not payload.get("jti"):
+        raise HTTPException(status_code=400, detail="Invalid confirmation token.")
+
+    declined, message = decline_confirmation(
+        db,
+        jti=str(payload["jti"]),
+        user_id=user.id,
+    )
+    if not declined:
+        raise HTTPException(status_code=409, detail=message)
+    return {"status": "declined", "message": message}
+
 
 def _resolve_itinerary_destination(plan, text: str | None = None) -> str | None:
     """Resolve destination from structured planner data without guessing."""
