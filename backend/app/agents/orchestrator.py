@@ -292,10 +292,10 @@ def _attach_commitment_proposal(
 ) -> AgentMessageResponse:
     proposal = _extract_commitment_proposal(user_text)
     if proposal:
-        response.structured_data = {
-            **(response.structured_data or {}),
-            "commitment_proposal": proposal,
-        }
+        structured = dict(response.structured_data or {})
+        structured.setdefault("type", "commitment_proposal")
+        structured["commitment_proposal"] = proposal
+        response.structured_data = structured
     return response
 
 def _extract_city_from_text(text: str) -> str | None:
