@@ -939,6 +939,9 @@ async def handle_message(
     if saved_memory_context:
         planner_context += "\n\n" + saved_memory_context
 
+    # Resolve relative dates in the user's timezone. Fall back to India local
+    # time for this India-first product; never let a UTC midnight shift "tomorrow".
+    planner_current_date = datetime.now(ZoneInfo("Asia/Kolkata")).date()
     # Explicit profile preferences are bounded, user-scoped context. They are
     # defaults only; the latest instruction in the conversation always wins.
     preference = (
@@ -957,9 +960,9 @@ async def handle_message(
             ),
         }
         try:
-            profile_defaults["local_datetime"] = datetime.now(
-                ZoneInfo(preference.timezone)
-            ).isoformat()
+            local_now = datetime.now(ZoneInfo(preference.timezone))
+            planner_current_date = local_now.date()
+            profile_defaults["local_datetime"] = local_now.isoformat()
         except Exception:
             profile_defaults["local_datetime"] = None
         planner_context += (
@@ -990,7 +993,11 @@ async def handle_message(
             planner_context += "\nACTIVE WORKFLOW CONTEXT:\n" + str(workflow_context)
 
     universal = UniversalTaskPlanner(provider=provider)
-    decision = await universal.interpret(text, planner_context)
+    decision = await universal.interpret(
+        text,
+        planner_context,
+        current_date=planner_current_date,
+    )
 
     if decision.get("decision") == "clarification":
         return AgentMessageResponse(
