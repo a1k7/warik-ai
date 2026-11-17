@@ -138,6 +138,10 @@ class CompileTripSummaryTool(BaseTool):
                             "filters_applied",
                         )
                         if group.get(key) is not None
+                        and not (
+                            isinstance(group.get(key), dict)
+                            and not group[key]
+                        )
                     })
 
             # Standalone hotel discovery (backward compatibility)
