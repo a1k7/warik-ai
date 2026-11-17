@@ -12,7 +12,9 @@ The product thesis is simple: a useful assistant should not only answer; it shou
 
 ### What is implemented
 
-- **Conversational assistant:** chat-based requests routed through an orchestrator, tool registry, and structured workflows.
+- **Conversational assistant:** answers general questions and routes supported requests through an orchestrator, live tool registry, and structured workflows.
+- **Goal-driven planning:** a capability-driven planner can compose validated multi-step workflows, bind outputs from earlier steps, handle optional failures, and pause at approval gates. A model-driven advisor may offer one contextual next step after a workflow using allowlisted outcome evidence; it does not execute that suggestion automatically.
+- **Personalisation:** explicit profile defaults for language, currency, timezone and monthly budget, plus relevant user-saved memories. These are advisory only; the latest request takes priority.
 - **Action Ledger:** capture commitments with a title, context, counterparty, due date, and status (open, in progress, waiting, blocked, completed). Marking a commitment complete requires a user-entered verification note.
 - **Approval checkpoints:** supported consequential tool actions can ask the user for explicit confirmation; tool activity is recorded in action logs.
 - **Personal memory:** users can save, edit, and delete context that may be relevant in later conversations.
