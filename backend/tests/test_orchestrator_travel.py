@@ -83,7 +83,8 @@ def test_travel_request_returns_compiled_summary(
         ],
     )
 
-    async def fake_interpret(self, user_message, conversation_context=""):
+    async def fake_interpret(self, user_message, conversation_context="", current_date=None):
+        captured["current_date"] = current_date
         return {"decision": "workflow", "plan": plan}
 
     monkeypatch.setattr(
