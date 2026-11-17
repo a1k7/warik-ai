@@ -248,3 +248,36 @@ def test_trip_summary_preserves_external_flight_search_when_live_inventory_is_mi
         "live_inventory": False,
         "resolution_status": "provider_unavailable",
     }]
+
+
+def test_trip_summary_preserves_nonempty_flight_filters_but_omits_empty_filters():
+    tool = CompileTripSummaryTool()
+    result = tool.execute(
+        None,
+        CompileTripSummaryInput(
+            destination="Delhi to Bengaluru",
+            dependency_results={
+                "flight": {
+                    "tool": "search_flights_real",
+                    "result": {
+                        "type": "flight_list",
+                        "items": [],
+                        "live_inventory": True,
+                        "filters_applied": {
+                            "date": "2026-12-12",
+                            "arrival_time_to": "10:00",
+                        },
+                    },
+                }
+            },
+        ),
+    )
+
+    assert result.success is True
+    assert result.data["flight_searches"] == [{
+        "live_inventory": True,
+        "filters_applied": {
+            "date": "2026-12-12",
+            "arrival_time_to": "10:00",
+        },
+    }]
