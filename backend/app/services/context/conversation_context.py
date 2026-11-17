@@ -60,8 +60,34 @@ def compact_travel_result(value: Any) -> dict | None:
     elif result_type == "trip_summary":
         common["flight_searches"] = _compact_travel_items(
             value.get("flight_searches"),
-            ("search_url", "live_inventory", "resolution_status", "filters_applied", "result_count"),
+            ("origin", "destination", "date", "source", "search_url", "live_inventory", "resolution_status", "filters_applied", "result_count"),
         )
+        flight_groups = value.get("flight_groups")
+        if isinstance(flight_groups, list):
+            compact_groups = []
+            for group in flight_groups[:4]:
+                if not isinstance(group, dict):
+                    continue
+                compact_group = {
+                    key: group[key]
+                    for key in (
+                        "step_id", "origin", "destination", "date", "source",
+                        "live_inventory", "resolution_status", "search_url",
+                        "filters_applied",
+                    )
+                    if group.get(key) is not None
+                }
+                compact_group["items"] = _compact_travel_items(
+                    group.get("items"),
+                    ("offer_id", "expires_at", "price", "amount", "currency", "departure_time", "arrival_time", "stops", "url", "segments"),
+                )
+                for flight in compact_group["items"]:
+                    flight["segments"] = _compact_travel_items(
+                        flight.get("segments"),
+                        ("airline", "flight_number", "origin", "destination", "departure", "arrival"),
+                    )[:4]
+                compact_groups.append(compact_group)
+            common["flight_groups"] = compact_groups
         common["flights"] = _compact_travel_items(
             value.get("flights"),
             ("offer_id", "expires_at", "price", "amount", "currency", "departure_time", "arrival_time", "stops", "url", "segments"),

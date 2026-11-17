@@ -70,6 +70,7 @@ class CompileTripSummaryTool(BaseTool):
         failures = params.dependency_failures or {}
 
         flights = []
+        flight_groups = []
         flight_searches = []
         standalone_hotels = []
         itinerary_hotels = []
@@ -89,19 +90,54 @@ class CompileTripSummaryTool(BaseTool):
             # Flight discovery
             if "flight" in tool:
                 items = data.get("items", [])
-                if isinstance(items, list):
-                    flights.extend(
-                        item for item in items
-                        if isinstance(item, dict)
-                    )
-                if data.get("search_url") or data.get("type") == "flight_list":
+                normalized_items = (
+                    [item for item in items if isinstance(item, dict)]
+                    if isinstance(items, list) else []
+                )
+                flights.extend(normalized_items)
+
+                filters = data.get("filters_applied") or {}
+                if not isinstance(filters, dict):
+                    filters = {}
+                origin_airport = data.get("origin_airport") or {}
+                destination_airport = data.get("destination_airport") or {}
+                if not isinstance(origin_airport, dict):
+                    origin_airport = {}
+                if not isinstance(destination_airport, dict):
+                    destination_airport = {}
+
+                if data.get("search_url") or data.get("type") == "flight_list" or normalized_items:
+                    group = {
+                        "step_id": str(dep_id),
+                        "origin": (
+                            origin_airport.get("iata")
+                            or filters.get("origin_iata")
+                            or filters.get("origin")
+                            or origin_airport.get("name")
+                        ),
+                        "destination": (
+                            destination_airport.get("iata")
+                            or filters.get("destination_iata")
+                            or filters.get("destination")
+                            or destination_airport.get("name")
+                        ),
+                        "date": filters.get("date"),
+                        "source": data.get("source") or data.get("provider"),
+                        "live_inventory": data.get("live_inventory"),
+                        "resolution_status": data.get("resolution_status"),
+                        "search_url": data.get("search_url"),
+                        "filters_applied": filters,
+                        "items": normalized_items,
+                    }
+                    flight_groups.append(group)
                     flight_searches.append({
-                        key: data[key]
+                        key: group[key]
                         for key in (
+                            "origin", "destination", "date", "source",
                             "search_url", "live_inventory", "resolution_status",
-                            "filters_applied", "result_count",
+                            "filters_applied",
                         )
-                        if key in data and data[key] is not None
+                        if group.get(key) is not None
                     })
 
             # Standalone hotel discovery (backward compatibility)
@@ -168,6 +204,7 @@ class CompileTripSummaryTool(BaseTool):
             "type": "trip_summary",
             "destination": params.destination or "Your Trip",
             "flights": flights,
+            "flight_groups": flight_groups,
             "flight_searches": flight_searches,
             "hotels": hotels,
             "cabs": cabs,

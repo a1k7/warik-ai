@@ -5,6 +5,7 @@ import {
   MapPin,
   ExternalLink,
   Check,
+  RefreshCw,
   AlertTriangle,
   ArrowRight,
   Map,
@@ -24,6 +25,7 @@ interface TripData {
   itinerary: any;
   failures: any[];
   flight_searches?: any[];
+  flight_groups?: any[];
 }
 
 function HotelImage({ src, name }: { src?: string; name: string }) {
@@ -169,15 +171,22 @@ function ActivityGroup({
 export const TripResultCard = ({
   data,
   onSelectHotel,
+  onSelectFlight,
+  onRefreshFlight,
 }: {
   data: TripData;
   onSelectHotel?: (hotel: any, context: any) => void;
+  onSelectFlight?: (flight: any) => void;
+  onRefreshFlight?: (offerId: string) => void;
 }) => {
   if (!data) return null;
 
   const hotels = data.hotels || [];
   const days = data.itinerary?.days || [];
   const flightSearches = data.flight_searches ?? [];
+  const flightGroups = data.flight_groups?.length
+    ? data.flight_groups
+    : (data.flights?.length ? [{ items: data.flights }] : []);
 
   const displayTitle =
     !data.destination || data.destination === 'Your Trip'
@@ -436,57 +445,106 @@ export const TripResultCard = ({
       )}
 
       {/* FLIGHTS */}
-      {data.flights?.length > 0 && (
+      {flightGroups.length > 0 && (
         <section className="rounded-[22px] border border-[#702D3C]/40 bg-[#30252A] p-5 sm:p-6 shadow-lg">
           <div className="flex items-center gap-2 text-[#D6A8B3] text-[10px] uppercase tracking-[0.2em] font-bold mb-1">
             <Plane size={14} /> Flight options
           </div>
-          <h3 className="text-xl font-semibold mb-4">Getting there</h3>
+          <h3 className="text-xl font-semibold mb-4">
+            {flightGroups.length > 1 ? 'Your flight legs' : 'Getting there'}
+          </h3>
 
-          <div className="grid gap-3">
-            {data.flights.map((flight: any, index: number) => (
-              <article
-                key={index}
-                className="rounded-xl bg-[#1A1417] border border-white/[0.07] p-4"
-              >
-                <div className="flex items-center justify-between gap-3 mb-3">
-                  <p className="text-lg font-semibold">{flight.price}</p>
-                  <span className="text-xs text-[#D6A8B3]">
-                    {flight.stops === 0 ? 'Non-stop' : `${flight.stops ?? '—'} stop(s)`}
-                  </span>
-                </div>
-
-                {flight.segments?.map((segment: any, j: number) => (
-                  <div key={j} className="border-t border-white/[0.07] pt-3 mt-2">
-                    <div className="flex justify-between text-sm gap-2">
-                      <span className="font-medium">
-                        {segment.airline} {segment.flight_number}
-                      </span>
-                      <span className="text-[#C99AA4] text-xs">
-                        {segment.departure}
-                      </span>
+          <div className="grid gap-4">
+            {flightGroups.map((group: any, groupIndex: number) => {
+              const groupItems = Array.isArray(group.items) ? group.items : [];
+              const legLabel = flightGroups.length === 2
+                ? (groupIndex === 0 ? 'Outbound' : 'Return')
+                : (flightGroups.length > 1 ? `Leg ${groupIndex + 1}` : 'Flight options');
+              return (
+                <div key={group.step_id || groupIndex} className="rounded-2xl border border-white/[0.07] bg-[#21191D] p-4">
+                  <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
+                    <div>
+                      <p className="text-[10px] uppercase tracking-[0.18em] font-bold text-[#C99AA4]">{legLabel}</p>
+                      {(group.origin || group.destination) && (
+                        <p className="text-sm font-semibold mt-1">
+                          {group.origin || '—'} <ArrowRight size={13} className="inline mx-1 text-[#C99AA4]"/> {group.destination || '—'}
+                        </p>
+                      )}
+                      {group.date && (
+                        <p className="text-[11px] text-[#BCA7AF] mt-1">{group.date}</p>
+                      )}
                     </div>
-                    <div className="flex items-center gap-2 text-xs text-[#BCA7AF] mt-2">
-                      <span>{segment.origin}</span>
-                      <ArrowRight size={12} />
-                      <span>{segment.destination}</span>
-                      <span className="ml-auto">{segment.arrival}</span>
-                    </div>
+                    {group.source && <span className="text-[10px] text-[#BCA7AF]">{group.source}</span>}
                   </div>
-                ))}
 
-                {flight.url && (
-                  <a
-                    href={flight.url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="mt-4 flex justify-center items-center gap-2 rounded-xl bg-[#702D3C] hover:bg-[#873D50] py-2.5 text-xs font-semibold"
-                  >
-                    View flight <ExternalLink size={12} />
-                  </a>
-                )}
-              </article>
-            ))}
+                  {groupItems.length > 0 ? (
+                    <div className="grid gap-3">
+                      {groupItems.map((flight: any, index: number) => (
+                        <article key={flight.offer_id || index} className="rounded-xl bg-[#1A1417] border border-white/[0.07] p-4">
+                          <div className="flex items-center justify-between gap-3 mb-3">
+                            <p className="text-lg font-semibold">{flight.price || 'Price unavailable'}</p>
+                            <span className="text-xs text-[#D6A8B3]">
+                              {flight.stops === 0 ? 'Non-stop' : `${flight.stops ?? '—'} stop(s)`}
+                            </span>
+                          </div>
+
+                          {flight.segments?.map((segment: any, j: number) => (
+                            <div key={j} className="border-t border-white/[0.07] pt-3 mt-2">
+                              <div className="flex justify-between text-sm gap-2">
+                                <span className="font-medium">{segment.airline} {segment.flight_number}</span>
+                                <span className="text-[#C99AA4] text-xs">{segment.departure}</span>
+                              </div>
+                              <div className="flex items-center gap-2 text-xs text-[#BCA7AF] mt-2">
+                                <span>{segment.origin}</span>
+                                <ArrowRight size={12} />
+                                <span>{segment.destination}</span>
+                                <span className="ml-auto">{segment.arrival}</span>
+                              </div>
+                            </div>
+                          ))}
+
+                          <div className="flex flex-wrap gap-2 mt-4">
+                            {flight.offer_id && onSelectFlight && (
+                              <button
+                                type="button"
+                                onClick={() => onSelectFlight(flight)}
+                                className="inline-flex items-center gap-2 rounded-xl bg-[#702D3C] hover:bg-[#873D50] px-3 py-2.5 text-xs font-semibold text-white"
+                              >
+                                Continue with this flight <Check size={12} />
+                              </button>
+                            )}
+                            {flight.offer_id && onRefreshFlight && (
+                              <button
+                                type="button"
+                                onClick={() => onRefreshFlight(flight.offer_id)}
+                                className="inline-flex items-center gap-2 rounded-xl border border-[#C99AA4]/30 bg-white/[0.04] px-3 py-2.5 text-xs font-semibold text-[#E7C2CA]"
+                              >
+                                Refresh live price <RefreshCw size={12} />
+                              </button>
+                            )}
+                            {!flight.offer_id && flight.url && (
+                              <a href={flight.url} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-2 rounded-xl bg-[#702D3C] hover:bg-[#873D50] px-3 py-2.5 text-xs font-semibold text-white">
+                                View flight <ExternalLink size={12} />
+                              </a>
+                            )}
+                          </div>
+                          {flight.expires_at && (
+                            <p className="text-[10px] text-[#BCA7AF] mt-2">Offer expiry: {new Date(flight.expires_at).toLocaleString('en-IN')}</p>
+                          )}
+                        </article>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="text-xs text-[#BCA7AF]">
+                      No structured live offers were returned for this leg.
+                      {group.search_url && (
+                        <a className="ml-1 text-[#D6A8B3] underline" href={group.search_url} target="_blank" rel="noopener noreferrer">Open route search</a>
+                      )}
+                    </p>
+                  )}
+                </div>
+              );
+            })}
           </div>
         </section>
       )}

@@ -160,3 +160,66 @@ def test_summary_handles_empty_dependencies():
     assert result.data["cabs"] == {}
     assert result.data["itinerary"] is None
     assert result.data["failures"] == []
+
+
+
+def test_summary_keeps_outbound_and_return_flights_in_separate_groups():
+    outbound = {
+        "offer_id": "off_outbound1",
+        "price": "₹6,400",
+        "segments": [{"origin": "BHO", "destination": "BLR"}],
+    }
+    inbound = {
+        "offer_id": "off_return1",
+        "price": "₹5,900",
+        "segments": [{"origin": "BLR", "destination": "BHO"}],
+    }
+    params = CompileTripSummaryInput(
+        destination="Bengaluru",
+        dependency_results={
+            "outbound_search": {
+                "tool": "search_flights_real",
+                "result": {
+                    "type": "flight_list",
+                    "items": [outbound],
+                    "live_inventory": True,
+                    "source": "Duffel",
+                    "filters_applied": {
+                        "origin": "Bhopal",
+                        "destination": "Bengaluru",
+                        "origin_iata": "BHO",
+                        "destination_iata": "BLR",
+                        "date": "2026-12-12",
+                    },
+                },
+            },
+            "return_search": {
+                "tool": "search_flights_real",
+                "result": {
+                    "type": "flight_list",
+                    "items": [inbound],
+                    "live_inventory": True,
+                    "source": "Duffel",
+                    "filters_applied": {
+                        "origin": "Bengaluru",
+                        "destination": "Bhopal",
+                        "origin_iata": "BLR",
+                        "destination_iata": "BHO",
+                        "date": "2026-12-16",
+                    },
+                },
+            },
+        },
+    )
+
+    result = CompileTripSummaryTool().execute(None, params)
+
+    assert result.success
+    assert result.data["flights"] == [outbound, inbound]
+    assert len(result.data["flight_groups"]) == 2
+    assert result.data["flight_groups"][0]["origin"] == "BHO"
+    assert result.data["flight_groups"][0]["destination"] == "BLR"
+    assert result.data["flight_groups"][0]["date"] == "2026-12-12"
+    assert result.data["flight_groups"][1]["origin"] == "BLR"
+    assert result.data["flight_groups"][1]["destination"] == "BHO"
+    assert result.data["flight_groups"][1]["date"] == "2026-12-16"
