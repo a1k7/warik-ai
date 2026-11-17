@@ -17,7 +17,7 @@ import {
 } from './api';
 import { Conversation, Message } from './types';
 
-const ResultCards = ({ data, onSaveCommitment, savingCommitment, onRefreshFlight, onSelectFlight }: { data: any; onSaveCommitment?: (proposal: any) => void; savingCommitment?: boolean; onRefreshFlight?: (offerId: string) => void; onSelectFlight?: (item: any) => void }) => {
+const ResultCards = ({ data, onSaveCommitment, savingCommitment, onRefreshFlight, onSelectFlight, onSelectHotel }: { data: any; onSaveCommitment?: (proposal: any) => void; savingCommitment?: boolean; onRefreshFlight?: (offerId: string) => void; onSelectFlight?: (item: any) => void; onSelectHotel?: (item: any, context: any) => void }) => {
   if (!data) return null;
 
   if (data.commitment_proposal) {
@@ -179,6 +179,15 @@ const ResultCards = ({ data, onSaveCommitment, savingCommitment, onRefreshFlight
                   <p className="text-xs text-jmuted">
                     Total stay: {item.total_stay}
                   </p>
+                )}
+                {onSelectHotel && (
+                  <button
+                    type="button"
+                    onClick={() => onSelectHotel(item, data.search_context || {})}
+                    className="mt-1 inline-flex items-center justify-center gap-2 rounded-lg border border-jprimary/40 bg-jprimary/10 px-3 py-2 text-xs font-bold text-jsecondary hover:bg-jprimary/20"
+                  >
+                    Use this stay in my trip <Check size={12} />
+                  </button>
                 )}
               </div>
             </div>
@@ -479,6 +488,21 @@ export const Chat = () => {
 
     void executeSend(
       `I select the flight offer ${item.offer_id} (${details}). Keep this exact offer as my preferred option in this conversation, but do not book it. Tell me the next useful step and ask only for missing details needed for any airport transfer or hotel planning. Do not assume a hotel, pickup point or drop-off location.`,
+      activeConvId,
+    );
+  };
+
+  const handleSelectHotel = (item: any, context: any) => {
+    if (!activeConvId || isLoading || !item?.name) return;
+    const stay = [
+      context?.city ? `in ${context.city}` : '',
+      context?.check_in && context?.check_out ? `from ${context.check_in} to ${context.check_out}` : '',
+      item.total_stay ? `total ${item.total_stay}` : '',
+      item.address ? `at ${item.address}` : '',
+      item.accommodation_id ? `provider property ID ${item.accommodation_id}` : '',
+    ].filter(Boolean).join(', ');
+    void executeSend(
+      `I select ${item.name} (${stay}). Keep this as my preferred stay in this trip, but do not book it. Based on my selected flight and this property, can you arrange an airport transfer? Ask me only for any essential missing details.`,
       activeConvId,
     );
   };
@@ -789,7 +813,7 @@ export const Chat = () => {
                     <div className="prose prose-invert prose-sm max-w-none prose-a:text-jsecondary prose-a:underline prose-strong:text-white prose-p:mb-2 prose-p:last:mb-0">
                       <ReactMarkdown>{msg.content}</ReactMarkdown>
                     </div>
-                    {msg.structured_data && <ResultCards data={msg.structured_data} onSaveCommitment={(proposal) => handleSaveCommitment(msg, proposal)} savingCommitment={confirmationBusyId === msg.id} onRefreshFlight={handleRefreshFlight} onSelectFlight={handleSelectFlight} />}
+                    {msg.structured_data && <ResultCards data={msg.structured_data} onSaveCommitment={(proposal) => handleSaveCommitment(msg, proposal)} savingCommitment={confirmationBusyId === msg.id} onRefreshFlight={handleRefreshFlight} onSelectFlight={handleSelectFlight} onSelectHotel={handleSelectHotel} />}
                     {msg.needs_confirmation && msg.confirmation_token && msg.confirmation_status !== 'declined' && msg.confirmation_status !== 'approved' && (
                       <div className="mt-4 rounded-xl border border-amber-400/40 bg-amber-400/5 p-4" role="group" aria-label="Action approval">
                         <div className="flex items-start gap-2">
