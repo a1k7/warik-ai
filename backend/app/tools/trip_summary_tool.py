@@ -70,6 +70,7 @@ class CompileTripSummaryTool(BaseTool):
         failures = params.dependency_failures or {}
 
         flights = []
+        flight_searches = []
         standalone_hotels = []
         itinerary_hotels = []
         cabs = {}
@@ -93,6 +94,15 @@ class CompileTripSummaryTool(BaseTool):
                         item for item in items
                         if isinstance(item, dict)
                     )
+                if data.get("search_url") or data.get("type") == "flight_list":
+                    flight_searches.append({
+                        key: data[key]
+                        for key in (
+                            "search_url", "live_inventory", "resolution_status",
+                            "filters_applied", "result_count",
+                        )
+                        if key in data and data[key] is not None
+                    })
 
             # Standalone hotel discovery (backward compatibility)
             elif "hotel" in tool:
@@ -158,6 +168,7 @@ class CompileTripSummaryTool(BaseTool):
             "type": "trip_summary",
             "destination": params.destination or "Your Trip",
             "flights": flights,
+            "flight_searches": flight_searches,
             "hotels": hotels,
             "cabs": cabs,
             "itinerary": itinerary,

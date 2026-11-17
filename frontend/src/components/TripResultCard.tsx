@@ -22,6 +22,7 @@ interface TripData {
   cabs: any;
   itinerary: any;
   failures: any[];
+  flight_searches?: any[];
 }
 
 function HotelImage({ src, name }: { src?: string; name: string }) {
@@ -306,7 +307,7 @@ export const TripResultCard = ({ data }: { data: TripData }) => {
         <section className="rounded-[22px] border border-[#702D3C]/40 bg-[#30252A] p-5 sm:p-6 shadow-lg">
           <div className="mb-5">
             <div className="flex items-center gap-2 text-[#D6A8B3] text-[10px] uppercase tracking-[0.2em] font-bold">
-              <Building2 size={14} /> Handpicked stays
+              <Building2 size={14} /> Hotel options
             </div>
             <h3 className="text-xl font-semibold mt-1">Places to stay</h3>
             <p className="text-xs text-[#BCA7AF] mt-1">
@@ -387,6 +388,32 @@ export const TripResultCard = ({ data }: { data: TripData }) => {
         </section>
       )}
 
+
+      {/* Provider fallback: retain the route handoff when structured live offers are unavailable. */}
+      {(!data.flights || data.flights.length === 0) && data.flight_searches?.length > 0 && (
+        <section className="rounded-[22px] border border-[#702D3C]/40 bg-[#30252A] p-5 sm:p-6">
+          <div className="flex items-center gap-2 text-[#D6A8B3] text-[10px] uppercase tracking-[0.2em] font-bold mb-2">
+            <Plane size={14} /> Flight search
+          </div>
+          <h3 className="text-lg font-semibold">Check current flight options</h3>
+          <p className="text-xs text-[#BCA7AF] mt-2">
+            {data.flight_searches[0].live_inventory === false
+              ? "Live flight offers were not available from the connected provider in this session. This link opens an external route search; it is not a verified fare quote."
+              : "The connected provider returned no matching flight offers. You can also check the route directly."}
+          </p>
+          {data.flight_searches[0].search_url && (
+            <a
+              href={data.flight_searches[0].search_url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="mt-4 inline-flex items-center gap-2 rounded-xl bg-[#702D3C] hover:bg-[#873D50] px-4 py-3 text-xs font-semibold text-white"
+            >
+              Open external flight search <ExternalLink size={13} />
+            </a>
+          )}
+        </section>
+      )}
+
       {/* FLIGHTS */}
       {data.flights?.length > 0 && (
         <section className="rounded-[22px] border border-[#702D3C]/40 bg-[#30252A] p-5 sm:p-6 shadow-lg">
@@ -451,6 +478,9 @@ export const TripResultCard = ({ data }: { data: TripData }) => {
           </div>
           <h3 className="text-xl font-semibold mt-1 mb-4">Continue your journey</h3>
 
+          <p className="text-xs text-[#BCA7AF] mb-3">
+            These links open the provider app. Check its live fare and pickup details there; Warik has not booked a ride.
+          </p>
           <div className="flex flex-wrap gap-2">
             {Object.entries(data.cabs).map(([key, url]: [string, any]) => (
               <a
@@ -460,7 +490,7 @@ export const TripResultCard = ({ data }: { data: TripData }) => {
                 rel="noopener noreferrer"
                 className="flex items-center gap-2 rounded-xl border border-white/10 bg-[#1A1417] px-4 py-3 text-sm capitalize hover:border-[#C99AA4]/50 transition-colors"
               >
-                {key} <ExternalLink size={13} />
+                Continue with {key} <ExternalLink size={13} />
               </a>
             ))}
           </div>

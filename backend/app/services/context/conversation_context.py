@@ -58,6 +58,10 @@ def compact_travel_result(value: Any) -> dict | None:
             ("name", "address", "price_per_night", "total_stay", "currency", "rating", "booking_url", "check_in", "check_out"),
         )
     elif result_type == "trip_summary":
+        common["flight_searches"] = _compact_travel_items(
+            value.get("flight_searches"),
+            ("search_url", "live_inventory", "resolution_status", "filters_applied", "result_count"),
+        )
         common["flights"] = _compact_travel_items(
             value.get("flights"),
             ("price", "currency", "departure_time", "arrival_time", "stops", "url", "segments"),

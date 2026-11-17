@@ -58,10 +58,11 @@ const ResultCards = ({ data, onSaveCommitment, savingCommitment }: { data: any; 
         <h4 className="font-bold text-white text-sm flex items-center gap-2">
           <Car size={16} className="text-jprimary" /> Travel from {data.origin} to {data.destination}
         </h4>
+        <p className="text-xs text-jmuted">This opens the provider app for you to review availability and fare. No ride has been booked by Warik.</p>
         <div className="flex flex-col gap-2">
           {Object.entries(data.links || {}).map(([key, url]: [string, any]) => (
             <a key={key} href={url} target="_blank" rel="noopener noreferrer" className="flex justify-between items-center bg-jbg hover:bg-jmuted/10 p-3 rounded-lg border border-jmuted/10 transition-colors">
-              <span className="text-sm font-bold text-white flex items-center gap-2 capitalize">Book {key}</span>
+              <span className="text-sm font-bold text-white flex items-center gap-2 capitalize">Continue in {key}</span>
               <ExternalLink size={14} className="text-jsecondary" />
             </a>
           ))}

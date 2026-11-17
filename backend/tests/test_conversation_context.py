@@ -107,3 +107,32 @@ def test_context_carries_bounded_flight_options_for_follow_up():
     assert "2026-12-20 19:10" in result
     assert "offer-1" in result
     assert "must-not-copy" not in result
+
+
+
+def test_trip_summary_context_retains_external_flight_fallback_link():
+    summary = {
+        "type": "trip_summary",
+        "destination": "Mumbai",
+        "flights": [],
+        "flight_searches": [{
+            "search_url": "https://example.test/flights",
+            "live_inventory": False,
+            "resolution_status": "provider_unavailable",
+            "private_payload": "do-not-copy",
+        }],
+        "hotels": [],
+        "cabs": {},
+        "itinerary": None,
+        "failures": [],
+    }
+    conversation = SimpleNamespace(
+        state_json={},
+        messages=[
+            SimpleNamespace(role="assistant", content="Flight options are limited.", structured_data=summary),
+        ],
+    )
+    result = build_conversation_context(conversation)
+    assert "https://example.test/flights" in result
+    assert "provider_unavailable" in result
+    assert "do-not-copy" not in result
