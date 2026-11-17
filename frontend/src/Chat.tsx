@@ -125,14 +125,34 @@ const ResultCards = ({ data, onSaveCommitment, savingCommitment, onRefreshFlight
           </div>
         )}
 
+        {data.live_inventory === true && data.source && (
+          <p className="text-[10px] text-jsecondary flex items-center gap-1">
+            <Check size={12} /> Live provider results · {data.source}
+          </p>
+        )}
         {items.length > 0 ? (
           items.map((item: any, idx: number) => (
             <div
               key={idx}
               className="bg-jcard border border-jprimary/30 rounded-2xl overflow-hidden flex flex-col shadow-lg w-full"
             >
+              {item.image_url && (
+                <img
+                  src={item.image_url}
+                  alt={item.name ? `${item.name} property photo` : 'Accommodation photo'}
+                  loading="lazy"
+                  className="w-full h-36 object-cover bg-jbg"
+                />
+              )}
               <div className="p-4 flex flex-col gap-2">
-                <h3 className="font-bold text-white text-base">{item.name}</h3>
+                <div className="flex items-start justify-between gap-3">
+                  <h3 className="font-bold text-white text-base">{item.name}</h3>
+                  {item.rating !== undefined && item.rating !== null && item.rating !== '' && (
+                    <span className="shrink-0 rounded-lg bg-jprimary/10 px-2 py-1 text-xs font-bold text-jsecondary flex items-center gap-1">
+                      <Star size={11} /> {item.rating}
+                    </span>
+                  )}
+                </div>
                 {item.address && (
                   <p className="text-xs text-jmuted flex items-start gap-1">
                     <MapPin size={14} />
@@ -151,7 +171,7 @@ const ResultCards = ({ data, onSaveCommitment, savingCommitment, onRefreshFlight
                       rel="noopener noreferrer"
                       className="text-xs font-bold text-white bg-jprimary hover:bg-jsecondary px-4 py-2 rounded-lg transition-colors flex items-center gap-2"
                     >
-                      Book Now <ExternalLink size={12} />
+                      {String(item.provider || data.source || '').toLowerCase().includes('booking.com') ? 'View on Booking.com' : 'Check availability'} <ExternalLink size={12} />
                     </a>
                   )}
                 </div>

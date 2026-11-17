@@ -1371,7 +1371,11 @@ class StayApiHotelTool(BaseTool):
             data={
                 "type": "hotel_list",
                 "items": items,
-                "search_url": fallback_url if not items else None,
+                "search_url": (
+                    fallback_url
+                    if not items or any(not item.get("booking_url") for item in items)
+                    else None
+                ),
                 "live_inventory": True,
                 "source": "Booking.com Demand API v3.3",
                 "provider": "booking_demand",
