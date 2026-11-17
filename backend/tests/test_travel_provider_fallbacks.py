@@ -589,3 +589,95 @@ def test_flight_offer_refresh_retrieves_latest_price_without_booking(monkeypatch
     assert result.data["items"][0]["offer_id"] == "off_test123"
     assert "/air/offers/off_test123" in calls[0][0]
     assert "booking" in result.message.lower()
+
+
+
+def test_booking_demand_hotel_search_resolves_city_and_maps_live_prices(monkeypatch):
+    from app.tools.travel_apis import HotelInput, StayApiHotelTool
+
+    monkeypatch.setattr(travel_apis.settings, "booking_mode", "search_and_redirect")
+    monkeypatch.setattr(travel_apis.settings, "booking_api_base_url", "https://demandapi-sandbox.booking.com/3.3")
+    monkeypatch.setattr(travel_apis.settings, "booking_api_token", "test-token")
+    monkeypatch.setattr(travel_apis.settings, "booking_affiliate_id", "123456")
+    calls = []
+
+    class Response:
+        def __init__(self, payload):
+            self.payload = payload
+        def raise_for_status(self):
+            return None
+        def json(self):
+            return self.payload
+
+    class Client:
+        def __init__(self, **kwargs):
+            pass
+        def __enter__(self):
+            return self
+        def __exit__(self, *args):
+            return False
+        def post(self, url, headers, json):
+            calls.append({"url": url, "headers": headers, "json": json})
+            if url.endswith("/common/autocomplete"):
+                return Response({
+                    "request_id": "autocomplete-1",
+                    "data": [{
+                        "id": "-2140479",
+                        "type": "city",
+                        "name": {"en-gb": "Bengaluru"},
+                        "location": {"city": -2140479, "country": "in"},
+                    }],
+                })
+            if url.endswith("/accommodations/search"):
+                return Response({
+                    "request_id": "search-1",
+                    "data": [{
+                        "id": 10004,
+                        "name": "Test Bengaluru Hotel",
+                        "currency": {"booker": "INR", "accommodation": "INR"},
+                        "price": {
+                            "display": {"booker_currency": 12000.0},
+                            "total": {"booker_currency": 12000.0},
+                        },
+                        "url": "https://www.booking.com/hotel/in/test.html",
+                    }],
+                })
+            if url.endswith("/accommodations/details"):
+                return Response({
+                    "data": [{
+                        "id": 10004,
+                        "name": "Test Bengaluru Hotel",
+                        "location": {"address": "MG Road, Bengaluru"},
+                        "rating": {"review_score": 8.7},
+                        "photos": [{"url": "https://example.com/hotel.jpg"}],
+                    }],
+                })
+            raise AssertionError(f"Unexpected endpoint: {url}")
+
+    monkeypatch.setattr(travel_apis.httpx, "Client", Client)
+    tool = StayApiHotelTool()
+    result = tool.execute(
+        None,
+        HotelInput(
+            city="Bengaluru",
+            check_in="2026-12-10",
+            check_out="2026-12-12",
+            travellers=2,
+            budget=15000,
+            country_code="in",
+        ),
+    )
+
+    assert result.success
+    assert result.data["provider"] == "booking_demand"
+    assert result.data["live_inventory"] is True
+    assert result.data["items"][0]["name"] == "Test Bengaluru Hotel"
+    assert result.data["items"][0]["price_per_night"] == "₹6,000"
+    assert result.data["items"][0]["total_stay"] == "₹12,000"
+    assert result.data["items"][0]["rating"] == 8.7
+    assert result.data["items"][0]["booking_url"].startswith("https://www.booking.com/")
+    assert calls[0]["json"]["filters"]["types"] == ["city"] if "filters" in calls[0]["json"] else True
+    assert calls[0]["headers"]["X-Affiliate-Id"] == "123456"
+    assert calls[1]["json"]["city"] == -2140479
+    assert calls[1]["json"]["guests"]["number_of_adults"] == 2
+    assert calls[1]["json"]["guests"]["number_of_rooms"] == 1

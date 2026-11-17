@@ -92,9 +92,11 @@ class Settings(BaseSettings):
     agoda_affiliate_id: str = ""
     agoda_api_key: str = ""
 
-    # Booking.com Demand API: disabled until partner access is approved.
+    # Booking.com Demand API v3.3: search-and-redirect requires partner access.
+    # Set booking_mode=search_and_redirect and supply token + affiliate ID.
+    # Use https://demandapi-sandbox.booking.com/3.3 for sandbox testing.
     booking_mode: str = "disabled"
-    booking_api_base_url: str = ""
+    booking_api_base_url: str = "https://demandapi.booking.com/3.3"
     booking_api_token: str = ""
     booking_affiliate_id: str = ""
 

@@ -937,11 +937,22 @@ def _hotel_search_url(params) -> str:
 
 
 class HotelInput(BaseModel):
-    city: str = Field(...)
+    city: str = Field(..., min_length=2, max_length=200)
     check_in: str = Field(...)
     check_out: str = Field(...)
-    travellers: int = Field(default=2)
-    budget: Optional[float] = Field(default=None)
+    travellers: int = Field(default=2, ge=1, le=20)
+    budget: Optional[float] = Field(default=None, ge=0)
+    rooms: int = Field(default=1, ge=1, le=9)
+    country_code: str = Field(
+        default="in",
+        pattern=r"^[a-z]{2}$",
+        description="ISO-3166 alpha-2 destination country for Booking.com destination resolution. Use 'in' for Indian cities.",
+    )
+    booker_country: str = Field(
+        default="in",
+        pattern=r"^[a-z]{2}$",
+        description="ISO-3166 alpha-2 country of the traveller making the search.",
+    )
 
 
 class RefreshFlightOfferInput(BaseModel):
@@ -1011,26 +1022,366 @@ class StayApiHotelTool(BaseTool):
     name = "search_hotels_stayapi"
 
     description = (
-        "Search hotels and return external Booking.com links. "
-        "Does not create a reservation or process payment. "
-        "Budget is MAXIMUM TOTAL price for the entire stay."
+        "Search live hotel offers through configured Booking.com Demand API v3.3 "
+        "or the legacy TRVL CLI adapter. Returns options and redirect links only; "
+        "does not create a reservation or process payment. Budget is MAXIMUM TOTAL "
+        "price for the entire stay."
     )
 
     input_schema = HotelInput
     requires_confirmation = False
-
     capability = "travel"
-
-    provider_adapters = (
-        {
-            "provider_id": "trvl_cli",
-            "display_name": "TRVL CLI adapter",
-        },
-    )
-
+    provider_adapters = ()
     supported_operations = ("search",)
 
-    def execute(
+    def __init__(self):
+        booking_mode = settings.booking_mode.strip().lower()
+        booking_configured = bool(
+            settings.booking_api_token.strip()
+            and settings.booking_affiliate_id.strip()
+        )
+        if booking_mode == "search_and_redirect":
+            self.provider_adapters = ({
+                "provider_id": "booking_demand",
+                "display_name": "Booking.com Demand API",
+            },)
+            if not booking_configured:
+                self.execution_status = "requires_auth"
+                self.requires_auth = True
+        else:
+            self.provider_adapters = ({
+                "provider_id": "trvl_cli",
+                "display_name": "TRVL CLI adapter",
+            },)
+
+    def execute(self, ctx: ToolContext, params: HotelInput) -> ToolResult:
+        if settings.booking_mode.strip().lower() == "search_and_redirect":
+            return self._search_booking_demand(params)
+        return self._execute_trvl_cli(ctx, params)
+
+    def execute_for_provider(
+        self, ctx: ToolContext, params: HotelInput, provider_id: str
+    ) -> ToolResult:
+        provider_id = str(provider_id).strip().lower()
+        if provider_id == "booking_demand":
+            return self._search_booking_demand(params)
+        if provider_id == "trvl_cli":
+            return self._execute_trvl_cli(ctx, params)
+        return ToolResult(success=False, message=f"Hotel provider '{provider_id}' is not configured.")
+
+    @staticmethod
+    def _booking_headers() -> dict:
+        return {
+            "Authorization": f"Bearer {settings.booking_api_token.strip()}",
+            "X-Affiliate-Id": settings.booking_affiliate_id.strip(),
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+        }
+
+    @staticmethod
+    def _booking_text(value) -> str:
+        if isinstance(value, str):
+            return value.strip()
+        if isinstance(value, dict):
+            return str(
+                value.get("en-gb")
+                or value.get("en")
+                or next(iter(value.values()), "")
+            ).strip()
+        return ""
+
+    def _search_booking_demand(self, params: HotelInput) -> ToolResult:
+        """Search Booking.com Demand API v3.3; redirect to Booking.com to book."""
+        if not settings.booking_api_token.strip() or not settings.booking_affiliate_id.strip():
+            return ToolResult(
+                success=False,
+                message="Booking.com Demand API requires a server-side API token and affiliate ID. Connect approved partner credentials or use the standard hotel search handoff.",
+            )
+
+        try:
+            check_in = datetime.strptime(params.check_in, "%Y-%m-%d").date()
+            check_out = datetime.strptime(params.check_out, "%Y-%m-%d").date()
+            if check_in.isoformat() != params.check_in or check_out.isoformat() != params.check_out:
+                raise ValueError("Dates must use YYYY-MM-DD format.")
+            if check_out <= check_in:
+                raise ValueError("Check-out must be after check-in.")
+            if check_in < datetime.now().date():
+                raise ValueError("Check-in date is in the past.")
+        except (TypeError, ValueError) as exc:
+            return ToolResult(success=False, message=f"Hotel search skipped: {exc}")
+
+        base_url = (
+            settings.booking_api_base_url.strip()
+            or "https://demandapi.booking.com/3.3"
+        ).rstrip("/")
+        if not base_url.startswith("https://") or not (
+            "demandapi.booking.com" in base_url
+            or "demandapi-sandbox.booking.com" in base_url
+        ):
+            return ToolResult(
+                success=False,
+                message="Booking.com API base URL must use the official HTTPS Demand API host.",
+            )
+
+        headers = self._booking_headers()
+        try:
+            with httpx.Client(timeout=httpx.Timeout(30.0)) as client:
+                location_response = client.post(
+                    f"{base_url}/common/autocomplete",
+                    headers=headers,
+                    json={
+                        "query": params.city.strip(),
+                        "language": "en-gb",
+                        "country": params.country_code,
+                        "filters": {"types": ["city"]},
+                    },
+                )
+                location_response.raise_for_status()
+                location_payload = location_response.json()
+
+                suggestions = location_payload.get("data") or []
+                city_candidates = [
+                    item for item in suggestions
+                    if isinstance(item, dict)
+                    and str(item.get("type") or "").lower() == "city"
+                    and str((item.get("location") or {}).get("country") or "").lower()
+                        == params.country_code.lower()
+                ]
+                requested_city = " ".join(params.city.casefold().split())
+                exact_matches = [
+                    item for item in city_candidates
+                    if self._booking_text(item.get("name")).casefold() == requested_city
+                    or self._booking_text((item.get("location") or {}).get("city_name")).casefold() == requested_city
+                ]
+                selected_city = exact_matches[0] if exact_matches else (
+                    city_candidates[0] if len(city_candidates) == 1 else None
+                )
+                if selected_city is None:
+                    return ToolResult(
+                        success=False,
+                        message=(
+                            f"Booking.com could not resolve '{params.city}' unambiguously in "
+                            f"{params.country_code.upper()}. Add the country or a more specific destination."
+                        ),
+                        data={
+                            "type": "hotel_list",
+                            "items": [],
+                            "live_inventory": False,
+                            "resolution_status": "ambiguous_destination",
+                            "destination_suggestions": [
+                                self._booking_text(item.get("name"))
+                                for item in city_candidates[:5]
+                            ],
+                        },
+                    )
+
+                location = selected_city.get("location") or {}
+                city_id = location.get("city") or selected_city.get("id")
+                try:
+                    city_id = int(city_id)
+                except (TypeError, ValueError):
+                    return ToolResult(
+                        success=False,
+                        message="Booking.com returned an invalid city identifier. Please refine the destination.",
+                    )
+
+                search_request = {
+                    "booker": {
+                        "country": params.booker_country,
+                        "platform": "desktop",
+                    },
+                    "checkin": params.check_in,
+                    "checkout": params.check_out,
+                    "city": city_id,
+                    "extras": ["products"],
+                    "guests": {
+                        "number_of_adults": params.travellers,
+                        "number_of_rooms": params.rooms,
+                    },
+                    "rows": 10,
+                    "sort": {"by": "price", "direction": "ascending"},
+                }
+                search_response = client.post(
+                    f"{base_url}/accommodations/search",
+                    headers=headers,
+                    json=search_request,
+                )
+                search_response.raise_for_status()
+                search_payload = search_response.json()
+
+                raw_results = search_payload.get("data") or []
+                property_ids = [
+                    item.get("id")
+                    for item in raw_results[:10]
+                    if isinstance(item, dict) and item.get("id") is not None
+                ]
+                detail_map = {}
+                if property_ids:
+                    details_response = client.post(
+                        f"{base_url}/accommodations/details",
+                        headers=headers,
+                        json={
+                            "accommodations": property_ids,
+                            "extras": ["photos"],
+                            "languages": ["en-gb"],
+                        },
+                    )
+                    details_response.raise_for_status()
+                    details_payload = details_response.json()
+                    detail_map = {
+                        str(item.get("id")): item
+                        for item in (details_payload.get("data") or [])
+                        if isinstance(item, dict) and item.get("id") is not None
+                    }
+        except httpx.HTTPStatusError as exc:
+            status_code = exc.response.status_code
+            return ToolResult(
+                success=False,
+                message=(
+                    f"Booking.com hotel search failed with HTTP {status_code}. "
+                    "Check Demand API partner permissions and server credentials."
+                ),
+                data={
+                    "type": "hotel_list",
+                    "items": [],
+                    "live_inventory": False,
+                    "provider": "booking_demand",
+                    "resolution_status": "provider_error",
+                },
+                retry_safe=status_code >= 500 or status_code in {408, 429},
+            )
+        except (httpx.RequestError, ValueError, TypeError) as exc:
+            return ToolResult(
+                success=False,
+                message=f"Booking.com hotel search is temporarily unavailable ({type(exc).__name__}).",
+                data={
+                    "type": "hotel_list",
+                    "items": [],
+                    "live_inventory": False,
+                    "provider": "booking_demand",
+                    "resolution_status": "provider_unavailable",
+                },
+                retry_safe=True,
+            )
+
+        nights = (check_out - check_in).days
+        candidates = []
+        excluded = 0
+        for result in raw_results:
+            if not isinstance(result, dict):
+                continue
+            detail = detail_map.get(str(result.get("id")), {})
+            name = self._booking_text(
+                result.get("name") or detail.get("name")
+            )
+            if not name:
+                continue
+
+            price_data = result.get("price") or {}
+            display_price = price_data.get("display") or {}
+            total_price = price_data.get("total") or {}
+            raw_amount = (
+                display_price.get("booker_currency")
+                if display_price.get("booker_currency") is not None
+                else total_price.get("booker_currency")
+            )
+            if raw_amount is None:
+                raw_amount = total_price.get("accommodation_currency")
+            currency_data = result.get("currency") or {}
+            currency = str(
+                currency_data.get("booker")
+                or currency_data.get("accommodation")
+                or params.booker_country.upper()
+            ).upper()
+            try:
+                amount = float(raw_amount)
+            except (TypeError, ValueError):
+                continue
+            if amount <= 0:
+                continue
+
+            if params.budget is not None and currency == "INR" and amount > params.budget:
+                excluded += 1
+                continue
+
+            detail_location = detail.get("location") or result.get("location") or {}
+            address = detail_location.get("address") or detail_location.get("address_line") or ""
+            if isinstance(address, dict):
+                address = address.get("full") or address.get("text") or ""
+
+            photos = detail.get("photos") or result.get("photos") or []
+            image_url = ""
+            if photos and isinstance(photos[0], dict):
+                image_url = photos[0].get("url") or photos[0].get("large_url") or ""
+
+            rating_data = detail.get("rating") or result.get("rating") or {}
+            rating = (
+                rating_data.get("review_score")
+                if isinstance(rating_data, dict)
+                else rating_data
+            )
+
+            booking_url = result.get("url") or detail.get("url")
+            if not isinstance(booking_url, str) or not booking_url.startswith("https://"):
+                booking_url = result.get("deep_link_url") or detail.get("deep_link_url") or ""
+
+            candidates.append({
+                "name": name,
+                "address": str(address),
+                "price_per_night": format_price(amount / nights, currency),
+                "total_stay": format_price(amount, currency),
+                "currency": currency,
+                "nights": nights,
+                "total_inr": amount if currency == "INR" else None,
+                "booking_url": booking_url,
+                "image_url": image_url,
+                "rating": rating or "",
+                "provider": "Booking.com Demand API",
+                "accommodation_id": result.get("id"),
+            })
+
+        candidates.sort(
+            key=lambda item: item["total_inr"] if item["total_inr"] is not None else float("inf")
+        )
+        items = candidates[:5]
+        fallback_url = _hotel_search_url(params)
+        return ToolResult(
+            success=True,
+            message=(
+                f"Found {len(items)} live Booking.com accommodation option(s) in {params.city}."
+                if items
+                else (
+                    f"No Booking.com accommodation options matched {params.city} for those dates."
+                    + (f" {excluded} result(s) exceeded your ₹{params.budget:,.0f} total budget." if excluded else "")
+                )
+            ),
+            data={
+                "type": "hotel_list",
+                "items": items,
+                "search_url": fallback_url if not items else None,
+                "live_inventory": True,
+                "source": "Booking.com Demand API v3.3",
+                "provider": "booking_demand",
+                "request_id": search_payload.get("request_id"),
+                "search_context": {
+                    "city": params.city,
+                    "city_id": city_id,
+                    "check_in": params.check_in,
+                    "check_out": params.check_out,
+                    "travellers": params.travellers,
+                    "rooms": params.rooms,
+                    "budget": params.budget,
+                    "currency": "INR" if params.budget is not None else None,
+                },
+                "budget_filter_applied": params.budget is not None and all(
+                    item["currency"] == "INR" for item in items
+                ),
+                "excluded_over_budget": excluded,
+            },
+            retry_safe=True,
+        )
+
+    def _execute_trvl_cli(
         self,
         ctx: ToolContext,
         params: HotelInput,

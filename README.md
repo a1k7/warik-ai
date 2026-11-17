@@ -21,7 +21,7 @@ The product thesis is simple: a useful assistant should not only answer; it shou
 - **Everyday organisation:** tasks, reminders, expense records and summaries.
 - **Goal-driven travel workflows:** flight discovery, airport resolution, travel itineraries, date-aware hotel candidates, and cab handoff links are composed by the universal planner when relevant to the user's goal.
 - **Flight offers:** when `DUFFEL_API_KEY` is configured on the backend, Warik searches Duffel's current flight offers, applies supported passenger, cabin, stop and time-window filters, displays provider prices and operating-carrier details, and can retrieve a refreshed offer by its exact offer ID.
-- **Hotels and ground transport:** hotel search still depends on the optional TRVL CLI provider or an external Booking.com search handoff; Booking.com Demand API is disabled until partner access is configured. Uber and Ola are ride handoff links, not live fare quotes or bookings.
+- **Hotels and ground transport:** hotel search can use the TRVL CLI fallback or the opt-in Booking.com Demand API v3.3 search-and-redirect adapter when partner token and affiliate ID are configured. Without those, Warik returns a Booking.com search handoff. Uber and Ola are ride handoff links, not live fare quotes or bookings.
 - **Food discovery:** map-listed restaurant candidates and external Swiggy/Zomato handoffs. Availability, live prices, menu data, and dietary suitability must not be assumed unless a provider explicitly verifies them.
 - **Documents:** upload supported documents and ask questions about their contents.
 - **India-first voice capture:** browser recording, ten speech-language choices, a transcript review/edit step, and an explicit send step. Voice is disabled by default and requires a configured speech provider.
@@ -90,7 +90,9 @@ Flight search uses the Duffel v2 API when `DUFFEL_API_KEY` is present in `backen
 
 The flight search also needs the configured geographic providers to resolve a city or airport to verified IATA airport records. If Duffel is not configured, Warik retains the legacy `trvl` CLI path; when neither live path is available, it returns an external search handoff and explicitly marks live inventory as unavailable.
 
-Hotel inventory depends on the optional `trvl` CLI. When unavailable, Warik returns a Booking.com search handoff, not verified hotel inventory. Booking.com Demand API mode remains disabled until the deployment has approved partner credentials. Cab options currently open Uber/Ola with pickup and drop-off details; they do not quote a live fare or book a ride.
+To enable Booking.com hotel search, set `BOOKING_MODE=search_and_redirect`, `BOOKING_API_TOKEN`, and `BOOKING_AFFILIATE_ID` in `backend/.env`. The adapter uses Demand API v3.3 city autocomplete, live accommodation search and property details, then returns provider-supplied Booking.com redirect URLs. For sandbox, set `BOOKING_API_BASE_URL=https://demandapi-sandbox.booking.com/3.3`. The account must have the necessary partner API permissions. Search-and-redirect does not book or collect payment.
+
+If Booking.com Demand API is not enabled, hotel search retains the optional `trvl` CLI path and falls back to a Booking.com search handoff when the CLI is unavailable. Cab options currently open Uber/Ola with pickup and drop-off details; they do not quote a live fare or book a ride.
 
 ## Tests and build
 
