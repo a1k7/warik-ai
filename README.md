@@ -94,6 +94,10 @@ To enable Booking.com hotel search, set `BOOKING_MODE=search_and_redirect`, `BOO
 
 If Booking.com Demand API is not enabled, hotel search retains the optional `trvl` CLI path and falls back to a Booking.com search handoff when the CLI is unavailable. Cab options currently open Uber/Ola with pickup and drop-off details; they do not quote a live fare or book a ride.
 
+## Provider setup and deployment
+
+See [docs/PROVIDER_SETUP.md](docs/PROVIDER_SETUP.md) for the exact server-side environment variables, current integration boundaries, production configuration and release-verification steps. The authenticated Settings page also shows the provider configuration snapshot without exposing credentials.
+
 ## Tests and build
 
 Backend:
