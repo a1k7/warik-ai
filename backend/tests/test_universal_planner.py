@@ -323,5 +323,6 @@ def test_orchestrator_passes_explicit_profile_defaults_as_advisory_context(db_se
     assert "hi-IN" in captured["context"]
     assert "INR" in captured["context"]
     assert "Asia/Kolkata" in captured["context"]
+    assert "local_datetime" in captured["context"]
     assert "25000" in captured["context"]
     assert "latest request overrides" in captured["context"]
