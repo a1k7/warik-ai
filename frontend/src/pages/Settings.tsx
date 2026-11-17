@@ -176,7 +176,7 @@ export const Settings = () => {
       account_connection: 'Account connection',
       best_effort: 'Best effort',
     };
-    return labels[status] || status.replaceAll('_', ' ');
+    return labels[status] || status.replace(/_/g, ' ');
   };
   const capabilityTone = (status: string) => {
     if (status === 'configured' || status === 'local_configured') return 'connected';
