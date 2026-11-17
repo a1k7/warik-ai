@@ -45,7 +45,7 @@ const ResultCards = ({ data, onSaveCommitment, savingCommitment, onRefreshFlight
   }
 
   if (data.type === 'trip_summary' || data.type === 'advanced_itinerary') {
-    return <TripResultCard data={data as any} />;
+    return <TripResultCard data={data as any} onSelectHotel={onSelectHotel} />;
   }
 
   if (data.type === 'workflow_status') {

@@ -4,6 +4,7 @@ import {
   Car,
   MapPin,
   ExternalLink,
+  Check,
   AlertTriangle,
   ArrowRight,
   Map,
@@ -165,7 +166,13 @@ function ActivityGroup({
   );
 }
 
-export const TripResultCard = ({ data }: { data: TripData }) => {
+export const TripResultCard = ({
+  data,
+  onSelectHotel,
+}: {
+  data: TripData;
+  onSelectHotel?: (hotel: any, context: any) => void;
+}) => {
   if (!data) return null;
 
   const hotels = data.hotels || [];
@@ -381,6 +388,19 @@ export const TripResultCard = ({ data }: { data: TripData }) => {
                     >
                       View booking options <ExternalLink size={13} />
                     </a>
+                  )}
+                  {onSelectHotel && (
+                    <button
+                      type="button"
+                      onClick={() => onSelectHotel(hotel, {
+                        city: hotel.city || data.destination,
+                        check_in: hotel.check_in,
+                        check_out: hotel.check_out,
+                      })}
+                      className="mt-2 flex items-center justify-center gap-2 w-full rounded-xl border border-[#C99AA4]/30 bg-white/[0.04] hover:bg-white/[0.08] py-3 text-xs font-semibold text-[#E7C2CA] transition-colors"
+                    >
+                      Use this stay in my trip <Check size={13} />
+                    </button>
                   )}
                 </div>
               </article>
