@@ -679,5 +679,6 @@ def test_booking_demand_hotel_search_resolves_city_and_maps_live_prices(monkeypa
     assert calls[0]["json"]["filters"]["types"] == ["city"]
     assert calls[0]["headers"]["X-Affiliate-Id"] == "123456"
     assert calls[1]["json"]["city"] == -2140479
+    assert calls[1]["json"]["currency"] == "INR"
     assert calls[1]["json"]["guests"]["number_of_adults"] == 2
     assert calls[1]["json"]["guests"]["number_of_rooms"] == 1

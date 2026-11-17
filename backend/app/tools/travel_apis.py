@@ -953,6 +953,11 @@ class HotelInput(BaseModel):
         pattern=r"^[a-z]{2}$",
         description="ISO-3166 alpha-2 country of the traveller making the search.",
     )
+    booker_currency: str = Field(
+        default="INR",
+        pattern=r"^[A-Z]{3}$",
+        description="ISO-4217 currency requested for displayed prices. Use the user's saved default currency when present.",
+    )
 
 
 class RefreshFlightOfferInput(BaseModel):
@@ -1194,6 +1199,7 @@ class StayApiHotelTool(BaseTool):
                         "country": params.booker_country,
                         "platform": "desktop",
                     },
+                    "currency": params.booker_currency,
                     "checkin": params.check_in,
                     "checkout": params.check_out,
                     "city": city_id,
@@ -1388,7 +1394,7 @@ class StayApiHotelTool(BaseTool):
                     "travellers": params.travellers,
                     "rooms": params.rooms,
                     "budget": params.budget,
-                    "currency": "INR" if params.budget is not None else None,
+                    "currency": params.booker_currency,
                 },
                 "budget_filter_applied": params.budget is not None and all(
                     item["currency"] == "INR" for item in items
