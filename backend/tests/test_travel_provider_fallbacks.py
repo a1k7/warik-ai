@@ -20,12 +20,14 @@ def _airport(code):
     }
 
 
-def _flight_params():
-    return FlightInput(
-        origin="Origin Place",
-        destination="Destination Place",
-        date="2026-12-20",
-    )
+def _flight_params(**overrides):
+    values = {
+        "origin": "Origin Place",
+        "destination": "Destination Place",
+        "date": "2026-12-20",
+    }
+    values.update(overrides)
+    return FlightInput(**values)
 
 
 def _hotel_params(**overrides):
