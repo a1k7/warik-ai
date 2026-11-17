@@ -433,13 +433,19 @@ class UniversalTaskPlanner:
 
         return plan
 
-    async def interpret(self, user_message: str, conversation_context: str = "") -> dict:
+    async def interpret(
+        self,
+        user_message: str,
+        conversation_context: str = "",
+        current_date: date | None = None,
+    ) -> dict:
+        """Plan using the user's local calendar date when the caller supplies it."""
         manifest = self._capability_manifest()
         # Do not expose the full JSON schema for every tool to the model when
         # it becomes very large; each tool's schema is still enforced locally.
         capabilities = json.dumps(manifest, ensure_ascii=False, separators=(",", ":"))
         system = UNIVERSAL_PLANNER_PROMPT.format(
-            current_date=date.today().isoformat(),
+            current_date=(current_date or date.today()).isoformat(),
             capabilities=capabilities[:MAX_PLAN_JSON_CHARS],
             max_steps=MAX_WORKFLOW_STEPS,
         )
