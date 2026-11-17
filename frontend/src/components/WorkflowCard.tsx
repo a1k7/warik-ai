@@ -99,7 +99,7 @@ export const WorkflowCard = ({ data, onRetried }: { data: WorkflowData; onRetrie
             <p className="text-xs text-jmuted mt-1 leading-relaxed">{data.goal_description}</p>
           )}
         </div>
-        <span className={statusChip(data.status)}>{data.status.replaceAll('_', ' ')}</span>
+        <span className={statusChip(data.status)}>{data.status.replace(/_/g, ' ')}</span>
       </div>
 
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
