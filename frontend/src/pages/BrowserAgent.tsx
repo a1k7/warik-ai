@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import {
-  Activity, ArrowRight, CheckCircle2, Circle, Clock3, ExternalLink,
+  Activity, ArrowRight, CheckCircle2, Circle, ExternalLink,
   History, Loader2, LockKeyhole, MonitorPlay, ShieldCheck, Sparkles,
   XCircle, Zap
 } from 'lucide-react';
