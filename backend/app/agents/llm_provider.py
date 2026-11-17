@@ -81,6 +81,16 @@ class OllamaProvider:
     def __init__(self, base_url: str, model: str):
         self.base_url = base_url.rstrip("/")
         self.model = model
+        self.num_ctx = settings.ollama_num_ctx
+        self.num_predict = settings.ollama_num_predict
+
+    def _generation_options(self, temperature: float) -> dict:
+        """Apply bounded local context and output limits to every Ollama call."""
+        return {
+            "temperature": temperature,
+            "num_ctx": self.num_ctx,
+            "num_predict": self.num_predict,
+        }
 
     async def _call(
         self, system: str, user: str, force_json: bool = False
@@ -94,7 +104,9 @@ class OllamaProvider:
                     {"role": "user", "content": user},
                 ],
                 "stream": False,
-                "options": {"temperature": 0.3 if force_json else 0.7},
+                "options": self._generation_options(
+                    0.3 if force_json else 0.7
+                ),
             }
             if force_json:
                 payload["format"] = "json"
@@ -121,9 +133,9 @@ class OllamaProvider:
                         "model": self.model,
                         "messages": messages,
                         "stream": False,
-                        "options": {
-                            "temperature": 0.0 if is_research else 0.7
-                        },
+                        "options": self._generation_options(
+                            0.0 if is_research else 0.7
+                        ),
                     },
                 )
                 response.raise_for_status()
@@ -174,7 +186,7 @@ class OllamaProvider:
                 "model": self.model,
                 "prompt": prompt,
                 "stream": False,
-                "options": {"temperature": 0.5},
+                "options": self._generation_options(0.5),
             }
             if format == "json":
                 payload["format"] = "json"
