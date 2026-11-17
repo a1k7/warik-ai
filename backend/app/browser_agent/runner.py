@@ -148,12 +148,24 @@ async def _run(task_id: int) -> None:
             db, task,
             "I converted your request into a flight-search plan and loaded relevant saved preferences.",
             "plan",
-            details=json.dumps({"planner": plan["mode"], "summary": plan["plan_summary"], "memory_used": task.memory_files}),
+            details=json.dumps({
+                "planner": plan["mode"],
+                "summary": plan["plan_summary"],
+                "memory_used": task.memory_files,
+                "memory_context_loaded": bool(memories),
+            }),
         )
 
         base = settings.agent_demo_base_url.rstrip("/")
         target = base + "/api/browser-agent/demo-site"
         if not _allowed(target):
+            _add_step(
+                db, task,
+                "I blocked navigation because the requested browser target is outside the configured domain allowlist.",
+                "navigation_blocked",
+                status="denied",
+                details=target,
+            )
             raise RuntimeError("Navigation blocked: demo target is not in AGENT_ALLOWED_DOMAINS.")
 
         playwright = await async_playwright().start()
@@ -179,6 +191,8 @@ async def _run(task_id: int) -> None:
             "fill",
             details=json.dumps({"origin": plan["origin"], "destination": plan["destination"], "date": tomorrow, "time_window": "evening"}),
         )
+        if time.monotonic() - active_started > settings.agent_timeout_seconds:
+            raise TimeoutError("The 5-minute active browser execution limit was reached.")
         await page.locator("#search_flights").click()
         await page.locator(".flight-card").first.wait_for(timeout=10000)
         cards = await page.locator(".flight-card").evaluate_all(
@@ -186,6 +200,8 @@ async def _run(task_id: int) -> None:
         )
         if not cards:
             raise RuntimeError("The demo flight catalogue returned no results.")
+        if time.monotonic() - active_started > settings.agent_timeout_seconds:
+            raise TimeoutError("The 5-minute active browser execution limit was reached.")
         cheapest = min(cards, key=lambda item: item["price"])
         await _capture(
             db, task, page,
