@@ -71,3 +71,24 @@ def test_ollama_synthesis_uses_the_same_context_budget(monkeypatch):
     _, request = FakeAsyncClient.calls[-1]
     assert request["json"]["options"]["num_ctx"] == 6144
     assert request["json"]["options"]["num_predict"] == 2048
+
+
+
+def test_ollama_uses_planner_model_for_reasoning_and_chat_model_for_replies(monkeypatch):
+    FakeAsyncClient.calls = []
+    monkeypatch.setattr(llm_provider.httpx, "AsyncClient", FakeAsyncClient)
+    monkeypatch.setattr(llm_provider.settings, "llm_provider", "ollama")
+    monkeypatch.setattr(llm_provider.settings, "ollama_base_url", "http://localhost:11434")
+    monkeypatch.setattr(llm_provider.settings, "ollama_model", "llama3.2:latest")
+    monkeypatch.setattr(llm_provider.settings, "ollama_planner_model", "mistral:latest")
+    monkeypatch.setattr(llm_provider.settings, "ollama_num_ctx", 8192)
+    monkeypatch.setattr(llm_provider.settings, "ollama_num_predict", 3072)
+
+    provider = llm_provider.get_provider()
+    asyncio.run(provider._call("planner instructions", "select tools", force_json=True))
+    planner_request = FakeAsyncClient.calls[-1][1]["json"]
+    assert planner_request["model"] == "mistral:latest"
+
+    asyncio.run(provider.synthesize([{"role": "user", "content": "Hello"}]))
+    chat_request = FakeAsyncClient.calls[-1][1]["json"]
+    assert chat_request["model"] == "llama3.2:latest"
