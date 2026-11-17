@@ -3,7 +3,8 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import {
   ArrowLeft, Send, MapPin, Plane, Building2, Car, Calendar, Star,
   Utensils, Bookmark, Map, Plus, Trash2, Menu, X, MessageSquare,
-  Check, ExternalLink, Paperclip, Loader2, Mic, Square, RefreshCw
+  Check, ExternalLink, Paperclip, Loader2, Mic, Square, RefreshCw,
+  ShieldAlert, ShieldCheck
 } from 'lucide-react';
 import { AIOrb } from './AIOrb';
 import { TripResultCard } from './components/TripResultCard';
@@ -19,6 +20,45 @@ import { Conversation, Message } from './types';
 
 const ResultCards = ({ data, onSaveCommitment, savingCommitment, onRefreshFlight, onSelectFlight, onSelectHotel }: { data: any; onSaveCommitment?: (proposal: any) => void; savingCommitment?: boolean; onRefreshFlight?: (offerId: string) => void; onSelectFlight?: (item: any) => void; onSelectHotel?: (item: any, context: any) => void }) => {
   if (!data) return null;
+
+  if (data.type === 'reliability_checkpoint') {
+    const needsInput = data.status === 'NEEDS_INPUT';
+    return (
+      <section
+        className="mt-4 rounded-2xl border border-amber-400/30 bg-amber-400/[0.045] p-4"
+        role="status"
+        aria-label="Warik reliability checkpoint"
+      >
+        <div className="flex items-start gap-3">
+          <div className="rounded-xl bg-amber-400/10 p-2 text-amber-300">
+            {needsInput ? <ShieldAlert size={19} /> : <ShieldCheck size={19} />}
+          </div>
+          <div className="min-w-0 flex-1">
+            <div className="flex flex-wrap items-center gap-2">
+              <p className="text-sm font-bold text-white">Reality check</p>
+              <span className="rounded-full border border-amber-400/20 bg-amber-400/10 px-2 py-1 text-[9px] font-bold uppercase tracking-wider text-amber-200">
+                {needsInput ? 'Needs your input' : 'Not verified'}
+              </span>
+            </div>
+            <p className="mt-2 text-xs leading-relaxed text-jmuted">
+              {data.reason || 'Warik could not validate a safe execution plan.'}
+            </p>
+            {Array.isArray(data.missing_information) && data.missing_information.length > 0 && (
+              <div className="mt-3 rounded-xl border border-jmuted/10 bg-black/10 p-3">
+                <p className="text-[10px] font-bold uppercase tracking-wider text-jsecondary">Required to continue</p>
+                {data.missing_information.map((item: string) => (
+                  <p key={item} className="mt-1 text-xs text-white">• {item}</p>
+                ))}
+              </div>
+            )}
+            <p className="mt-3 flex items-center gap-1.5 text-[10px] font-semibold text-amber-200">
+              <ShieldCheck size={12} /> No booking, purchase or external action was made.
+            </p>
+          </div>
+        </div>
+      </section>
+    );
+  }
 
   if (data.commitment_proposal) {
     const proposal = data.commitment_proposal;
