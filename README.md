@@ -98,6 +98,14 @@ If Booking.com Demand API is not enabled, hotel search retains the optional `trv
 
 See [docs/PROVIDER_SETUP.md](docs/PROVIDER_SETUP.md) for the exact server-side environment variables, current integration boundaries, production configuration and release-verification steps. The authenticated Settings page also shows the provider configuration snapshot without exposing credentials.
 
+A single-host Docker deployment baseline is included. Copy .env.production.example to .env.production, fill the required secrets and public HTTPS URLs, then run:
+
+    docker compose --env-file .env.production -f docker-compose.production.yml up -d --build
+
+Place a TLS reverse proxy or managed HTTPS ingress in front of the loopback-bound frontend and API. Review docs/PROVIDER_SETUP.md for the remaining production requirements and current migration limitation.
+
+See [docs/PROVIDER_SETUP.md](docs/PROVIDER_SETUP.md) for the exact server-side environment variables, current integration boundaries, production configuration and release-verification steps. The authenticated Settings page also shows the provider configuration snapshot without exposing credentials.
+
 ## Tests and build
 
 Backend:
