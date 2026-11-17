@@ -601,6 +601,8 @@ class UniversalTaskPlanner:
         current_date: date | None = None,
     ) -> dict:
         """Plan using the user's local calendar date when the caller supplies it."""
+        user_input = user_message.strip()
+        requires_capability = self.requires_registered_capability(user_input)
         manifest = self._capability_manifest()
         # Do not expose the full JSON schema for every tool to the model when
         # it becomes very large; each tool's schema is still enforced locally.
@@ -615,6 +617,11 @@ class UniversalTaskPlanner:
                 "Compact capability manifest is too large for safe planning: %s characters",
                 len(capabilities),
             )
+            if requires_capability:
+                return self._grounding_checkpoint(
+                    user_input, current_date,
+                    reason="The registered capability catalogue exceeded its safe planning limit.",
+                )
             return {"decision": "unavailable", "reply": None, "plan": None}
 
         system = UNIVERSAL_PLANNER_PROMPT.format(
@@ -622,11 +629,10 @@ class UniversalTaskPlanner:
             capabilities=capabilities,
             max_steps=MAX_WORKFLOW_STEPS,
         )
-        user_input = user_message.strip()
         if conversation_context:
             user_input = f"RECENT CONVERSATION:\n{conversation_context}\n\nLATEST USER MESSAGE:\n{user_input}"
 
-        requires_capability = self.requires_registered_capability(user_input)
+        requires_capability = requires_capability or self.requires_registered_capability(user_input)
 
         raw = await self.provider._call(system, user_input, force_json=True)
         if not raw or raw == "LLM_FAILED":
@@ -694,9 +700,11 @@ class UniversalTaskPlanner:
                 force_json=True,
             )
             forced_data = self._parse_json_object(forced_raw)
-            if not isinstance(forced_data, dict) or str(
-                forced_data.get("decision", "")
-            ).lower() == "chat":
+            forced_decision = (
+                str(forced_data.get("decision", "")).lower()
+                if isinstance(forced_data, dict) else ""
+            )
+            if forced_decision not in {"workflow", "clarification"}:
                 return self._grounding_checkpoint(
                     user_input, current_date,
                     reason="The planner attempted to answer without using a registered capability.",
@@ -709,6 +717,11 @@ class UniversalTaskPlanner:
         if decision == "clarification":
             return self._clarification(str(data.get("reply") or "What detail should I use?").strip())
         if decision != "workflow":
+            if requires_capability:
+                return self._grounding_checkpoint(
+                    user_input, current_date,
+                    reason="The planner did not produce a valid workflow or clarification.",
+                )
             return {"decision": "unavailable", "reply": None, "plan": None}
 
         result = self._build_plan(data.get("plan"), manifest)
