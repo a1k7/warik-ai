@@ -937,7 +937,7 @@ def _hotel_search_url(params) -> str:
 
 
 class HotelInput(BaseModel):
-    city: str = Field(..., min_length=2, max_length=200)
+    city: str = Field(..., min_length=3, max_length=200)
     check_in: str = Field(...)
     check_out: str = Field(...)
     travellers: int = Field(default=2, ge=1, le=20)
@@ -958,6 +958,22 @@ class HotelInput(BaseModel):
         pattern=r"^[A-Z]{3}$",
         description="ISO-4217 currency requested for displayed prices. Use the user's saved default currency when present.",
     )
+
+    @field_validator("country_code", "booker_country", mode="before")
+    @classmethod
+    def normalize_country_codes(cls, value):
+        normalized = str(value or "").strip().lower()
+        if not re.fullmatch(r"[a-z]{2}", normalized):
+            raise ValueError("Country codes must be ISO-3166 alpha-2.")
+        return normalized
+
+    @field_validator("booker_currency", mode="before")
+    @classmethod
+    def normalize_booker_currency(cls, value):
+        normalized = str(value or "").strip().upper()
+        if not re.fullmatch(r"[A-Z]{3}", normalized):
+            raise ValueError("Currency must be an ISO-4217 alpha-3 code.")
+        return normalized
 
 
 class RefreshFlightOfferInput(BaseModel):
@@ -1290,19 +1306,18 @@ class StayApiHotelTool(BaseTool):
             price_data = result.get("price") or {}
             display_price = price_data.get("display") or {}
             total_price = price_data.get("total") or {}
-            raw_amount = (
+            currency_data = result.get("currency") or {}
+            booker_amount = (
                 display_price.get("booker_currency")
                 if display_price.get("booker_currency") is not None
                 else total_price.get("booker_currency")
             )
-            if raw_amount is None:
+            if booker_amount is not None:
+                raw_amount = booker_amount
+                currency = str(currency_data.get("booker") or "").upper().strip()
+            else:
                 raw_amount = total_price.get("accommodation_currency")
-            currency_data = result.get("currency") or {}
-            currency = str(
-                currency_data.get("booker")
-                or currency_data.get("accommodation")
-                or ""
-            ).upper().strip()
+                currency = str(currency_data.get("accommodation") or "").upper().strip()
             try:
                 amount = float(raw_amount)
             except (TypeError, ValueError):
