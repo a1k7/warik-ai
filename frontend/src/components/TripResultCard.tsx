@@ -13,6 +13,7 @@ import {
   CalendarDays,
   Sparkles,
   Image as ImageIcon,
+  ShieldCheck,
 } from 'lucide-react';
 import { useState } from 'react';
 
@@ -183,6 +184,7 @@ export const TripResultCard = ({
 
   const hotels = data.hotels || [];
   const days = data.itinerary?.days || [];
+  const budget = data.itinerary?.budget;
   const flightSearches = data.flight_searches ?? [];
   const flightGroups = data.flight_groups?.length
     ? data.flight_groups
@@ -316,6 +318,78 @@ export const TripResultCard = ({
               </article>
             ))}
           </div>
+        </section>
+      )}
+
+      {/* EVIDENCE-AWARE BUDGET */}
+      {budget && (
+        <section className="rounded-[22px] border border-[#702D3C]/40 bg-[#30252A] p-5 sm:p-6">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <div className="flex items-center gap-2 text-[#D6A8B3] text-[10px] uppercase tracking-[0.2em] font-bold">
+                <ShieldCheck size={14} /> Budget reality check
+              </div>
+              <h3 className="text-xl font-semibold mt-1">What this trip may cost</h3>
+              <p className="text-xs text-[#BCA7AF] mt-1">
+                Estimates and provider prices are kept separate.
+              </p>
+            </div>
+            <span className="rounded-full border border-amber-400/25 bg-amber-400/10 px-3 py-1.5 text-[10px] font-bold uppercase tracking-wide text-amber-200">
+              {budget.is_partial ? 'Partial estimate' : 'Planning estimate'}
+            </span>
+          </div>
+
+          <div className="mt-4 grid gap-2">
+            {(budget.items || []).map((item: any, index: number) => (
+              <div key={`${item.category}-${index}`} className="flex items-center justify-between gap-3 rounded-xl bg-[#1A1417] border border-white/[0.06] px-3 py-3">
+                <div className="min-w-0">
+                  <p className="text-sm font-medium text-[#FAF7F3]">{item.category}</p>
+                  {item.note && <p className="text-[10px] text-[#BCA7AF] mt-1">{item.note}</p>}
+                  <p className="text-[9px] uppercase tracking-wider mt-1 text-[#C99AA4]">
+                    {item.classification === 'ESTIMATE'
+                      ? 'Modelled estimate'
+                      : item.classification === 'UNAVAILABLE'
+                        ? 'Not verified / excluded'
+                        : item.classification || 'Unclassified'}
+                  </p>
+                </div>
+                <p className="shrink-0 text-sm font-semibold text-[#F1DDE2] tabular-nums">
+                  {typeof item.amount === 'number'
+                    ? new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 }).format(item.amount)
+                    : 'Not included'}
+                </p>
+              </div>
+            ))}
+          </div>
+
+          <div className="mt-4 rounded-xl border border-white/10 bg-black/10 p-4">
+            <div className="flex items-end justify-between gap-3">
+              <div>
+                <p className="text-[10px] uppercase tracking-wider text-[#BCA7AF]">Estimated total</p>
+                <p className="text-2xl font-semibold text-white mt-1 tabular-nums">
+                  {typeof budget.total_estimate === 'number'
+                    ? new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 }).format(budget.total_estimate)
+                    : 'Unavailable'}
+                </p>
+              </div>
+              {typeof budget.remaining === 'number' && (
+                <div className="text-right">
+                  <p className="text-[10px] uppercase tracking-wider text-[#BCA7AF]">Remaining vs budget</p>
+                  <p className={`text-lg font-semibold mt-1 tabular-nums ${budget.remaining >= 0 ? 'text-emerald-300' : 'text-amber-300'}`}>
+                    {new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 }).format(budget.remaining)}
+                  </p>
+                </div>
+              )}
+            </div>
+            {Array.isArray(budget.excludes) && budget.excludes.length > 0 && (
+              <p className="text-[10px] text-amber-200/90 mt-3">
+                Excluded from total: {budget.excludes.join(', ')}.
+              </p>
+            )}
+          </div>
+          <p className="text-[10px] leading-relaxed text-[#BCA7AF] mt-3">
+            Estimates use planning assumptions, not live price quotes. Confirm transport fares, accommodation totals and attraction fees with providers before relying on this budget.
+          </p>
         </section>
       )}
 
