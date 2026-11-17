@@ -53,7 +53,7 @@ function LoginScreen({ onLogin }: { onLogin: () => void }) {
         <form onSubmit={submit} className="login-form">
           {mode === 'register' && <label>Name<input required value={name} onChange={(e) => setName(e.target.value)} autoComplete="name"/></label>}
           <label>Email<input required type="email" value={email} onChange={(e) => setEmail(e.target.value)} autoComplete="email"/></label>
-          <label>Password<input required type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete={mode === 'register' ? 'new-password' : 'current-password'}/></label>
+          <label>Password<input required type="password" minLength={8} value={password} onChange={(e) => setPassword(e.target.value)} autoComplete={mode === 'register' ? 'new-password' : 'current-password'}/></label>
           {error && <p className="inline-error">{error}</p>}
           <button className="login-button" disabled={busy}>{busy ? 'Please wait…' : mode === 'register' ? 'Create account' : 'Sign in'}</button>
         </form>
