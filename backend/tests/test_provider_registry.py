@@ -117,3 +117,14 @@ def test_planner_manifest_contains_provider_metadata():
         "uber",
         "ola",
     }
+
+
+
+def test_flight_offer_refresh_tool_is_registered():
+    registry = ToolRegistry()
+    tool = registry.get("refresh_flight_offer")
+    assert tool is not None
+    assert tool.capability == "travel"
+    assert tool.supported_operations == ("retrieve",)
+    assert tool.requires_confirmation is False
+    assert tool.is_mutating is False

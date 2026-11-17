@@ -46,6 +46,7 @@ from app.tools.trip_planner import (
 
 from app.tools.travel_apis import (
     RealFlightSearchTool,
+    RefreshFlightOfferTool,
     StayApiHotelTool,
     GeoapifyPlacesTool,
     CabDeepLinkTool,
@@ -92,6 +93,7 @@ class ToolRegistry:
 
             # Travel
             RealFlightSearchTool(),
+            RefreshFlightOfferTool(),
             StayApiHotelTool(),
             GeoapifyPlacesTool(),
             CabDeepLinkTool(),

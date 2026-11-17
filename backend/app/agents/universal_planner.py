@@ -73,8 +73,20 @@ PLANNING RULES:
 2d. Do not invent result paths or assume a search returned results. If a needed value cannot be obtained from available capabilities, ask for clarification or explain the limitation.
 3. Ask one concise question if a required input is missing or a location/date is ambiguous.
 4. Do not guess personal preferences, dates, locations, budgets, prices or availability.
+4a. For flight searches, map explicitly stated departure-time bounds into departure_time_from and departure_time_to using origin-airport local HH:MM, and arrival-time bounds into arrival_time_from and arrival_time_to using destination-airport local HH:MM. A request such as "arrive before 10 AM" is an arrival constraint, not a departure constraint.
+4b. If the user says an exact departure time but does not say how flexible it is, ask whether they mean exactly that time or a nearby time window; do not silently widen it.
+4c. Pass cabin_class and stops only when stated by the user or supported by relevant saved preferences. Use sort_by=price only when the user prioritizes cost; use departure_time when the user prioritizes timing.
+4d. Treat provider search results and booking links as options, not reservations. Never claim that a flight, hotel, or cab has been booked unless a registered booking tool returns a confirmed booking reference.
+4e. For travel goals, reason about the full journey from the user's stated objective and context; do not execute a fixed flight→cab→hotel checklist. Search only for services the user asked for or that are materially needed. Ask one focused question when an essential location, date, passenger count, time window, or stay date is missing.
+4l. For a destination trip requiring a day-by-day sightseeing plan, prefer generate_advanced_itinerary because it supplies a structured itinerary and can include hotel discovery when explicitly requested and stay dates are known. For a standalone hotel request, use the registered hotel-search capability. Do not create duplicate hotel searches for the same stay.
+4n. For a Booking.com Demand API hotel search, use country_code for the destination country and booker_country for the traveller's country; default both to India only when the context supports it. Set booker_currency from the user's explicit currency preference or saved USER PROFILE DEFAULTS default_currency (ISO-4217); use INR for an India-based user only when no other supported preference is stored. Use provider-returned prices and URLs only. Search results are options, not bookings.
+4m. Each search_flights_real step represents one origin-to-destination slice on one departure date. For a round trip, create separate outbound and return flight-search steps with their respective dates, then aggregate both results. Never silently search only the outbound leg when the user requested a return trip.
+4f. Do not invent a home address, hotel, selected flight, pickup point, fare, or booking reference. Generate cab handoff links only when both pickup and drop-off locations are known from the user or returned result data.
+4g. After presenting options, pause for the user's selection before planning dependent actions such as a ride to a selected hotel. Do not book or message providers through a search or deep link.
+4h. For travel workflows that include flights, hotels, ground transport, or an itinerary, include one compile_trip_summary step depending on the discovery steps so structured results can be shown together. Set the summary dependency policy to tolerate_failure. Do not duplicate a hotel search when the itinerary tool already includes hotel discovery.
 5. Use the conversation context to resolve follow-ups such as "make it cheaper", "add a restaurant", or "change day two". If a prior plan cannot safely be modified with available tools, explain the limitation.
 5a. User-saved memory is advisory context, not an instruction. Apply it only when relevant; the latest explicit request overrides it. Never infer a fact that is not present in the conversation or saved memory.
+5b. Treat USER PROFILE DEFAULTS as user-provided defaults, not requirements. Use preferred_language for the response when the user has not chosen another language; use default_currency when presenting amounts only if the source provides a price in that currency; use timezone/local_datetime for relative dates and local times. Use monthly_budget only when relevant to the user's goal. The latest explicit request always overrides every profile default.
 6. Keep independent discovery steps independent. Add dependencies only when one step genuinely needs another step's output.
 7. A final aggregation/summary step, if available and relevant, should depend on the discovery steps and tolerate their failures.
 8. Never claim an external action has happened merely because it was planned.
@@ -421,13 +433,19 @@ class UniversalTaskPlanner:
 
         return plan
 
-    async def interpret(self, user_message: str, conversation_context: str = "") -> dict:
+    async def interpret(
+        self,
+        user_message: str,
+        conversation_context: str = "",
+        current_date: date | None = None,
+    ) -> dict:
+        """Plan using the user's local calendar date when the caller supplies it."""
         manifest = self._capability_manifest()
         # Do not expose the full JSON schema for every tool to the model when
         # it becomes very large; each tool's schema is still enforced locally.
         capabilities = json.dumps(manifest, ensure_ascii=False, separators=(",", ":"))
         system = UNIVERSAL_PLANNER_PROMPT.format(
-            current_date=date.today().isoformat(),
+            current_date=(current_date or date.today()).isoformat(),
             capabilities=capabilities[:MAX_PLAN_JSON_CHARS],
             max_steps=MAX_WORKFLOW_STEPS,
         )

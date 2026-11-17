@@ -217,3 +217,67 @@ def test_summary_waits_for_all_discovery_steps():
     # Cab executes first; summary executes only after cab is terminal.
     assert calls == ["cab", "summary"]
     assert result["workflow_status"] == "PARTIALLY_COMPLETED"
+
+
+
+def test_trip_summary_preserves_external_flight_search_when_live_inventory_is_missing():
+    tool = CompileTripSummaryTool()
+    result = tool.execute(
+        None,
+        CompileTripSummaryInput(
+            destination="Delhi to Mumbai",
+            dependency_results={
+                "flight": {
+                    "tool": "search_flights_real",
+                    "result": {
+                        "type": "flight_list",
+                        "items": [],
+                        "search_url": "https://www.google.com/travel/flights?q=DEL-Mumbai",
+                        "live_inventory": False,
+                        "resolution_status": "provider_unavailable",
+                    },
+                }
+            },
+        ),
+    )
+
+    assert result.success is True
+    assert result.data["flights"] == []
+    assert result.data["flight_searches"] == [{
+        "search_url": "https://www.google.com/travel/flights?q=DEL-Mumbai",
+        "live_inventory": False,
+        "resolution_status": "provider_unavailable",
+    }]
+
+
+def test_trip_summary_preserves_nonempty_flight_filters_but_omits_empty_filters():
+    tool = CompileTripSummaryTool()
+    result = tool.execute(
+        None,
+        CompileTripSummaryInput(
+            destination="Delhi to Bengaluru",
+            dependency_results={
+                "flight": {
+                    "tool": "search_flights_real",
+                    "result": {
+                        "type": "flight_list",
+                        "items": [],
+                        "live_inventory": True,
+                        "filters_applied": {
+                            "date": "2026-12-12",
+                            "arrival_time_to": "10:00",
+                        },
+                    },
+                }
+            },
+        ),
+    )
+
+    assert result.success is True
+    assert result.data["flight_searches"] == [{
+        "date": "2026-12-12",
+        "live_inventory": True,
+        "filters_applied": {
+            "arrival_time_to": "10:00",
+        },
+    }]
