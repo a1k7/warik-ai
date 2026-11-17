@@ -45,7 +45,7 @@ Return exactly this JSON structure:
 
 TRAVEL RULES:
 
-1. For a trip or itinerary, use generate_advanced_itinerary.
+1. Use generate_advanced_itinerary when the user requests a day-by-day itinerary or multi-stop trip plan; do not force an itinerary on a point-to-point flight or hotel search.
 1a. Extract the destination as a place name only. Do not append traveller counts,
     dates, budgets, origin details, or the words "for X people".
 1b. Preserve administrative context when supplied: "Jaipur, Rajasthan, India"
@@ -55,6 +55,8 @@ TRAVEL RULES:
 1d. If the destination is ambiguous, ask for clarification rather than guessing.
 2. Preserve all requested cities in their original order.
 3. Never use search_places_geoapify when using generate_advanced_itinerary.
+3a. Plan from the user's requested outcome and relevant details. Do not add a fixed set of flight, hotel, food, or cab steps to every journey.
+3b. After search options are shown, wait for the user's selection before creating dependent steps such as a cab to a selected hotel. Use only details explicitly supplied or present in earlier tool results.
 4. Itinerary parameters:
    - destination
    - days
@@ -419,10 +421,14 @@ class GoalInterpreter:
         user_message: str,
         conversation_context: str = "",
     ) -> dict:
+        travel_tools = (
+            tool for tool in registry._tools.values()
+            if getattr(tool, "capability", "") in {"travel", "transport", "place_discovery"}
+        )
         tools_desc = "\n".join(
             f"- {tool.name}: {tool.description}\n"
             f"  Input schema: {json.dumps(tool.input_schema.model_json_schema(), ensure_ascii=False)}"
-            for tool in registry._tools.values()
+            for tool in travel_tools
         )
 
         system = GOAL_INTERPRETER_PROMPT.format(

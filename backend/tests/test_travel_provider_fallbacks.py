@@ -296,3 +296,63 @@ def test_flight_search_forwards_explicit_cabin_and_stop_preferences(monkeypatch)
     command = calls[0]
     assert command[command.index("--cabin") + 1] == "business"
     assert command[command.index("--stops") + 1] == "nonstop"
+
+
+
+def _flight_with_segments(*codes, departure="2026-12-20T19:10:00+05:30", price=100):
+    legs = []
+    for index in range(len(codes) - 1):
+        legs.append({
+            "airline": "Example Air",
+            "flight_number": f"EX{100 + index}",
+            "departure_airport": {"code": codes[index]},
+            "arrival_airport": {"code": codes[index + 1]},
+            "departure_time": departure,
+            "arrival_time": departure,
+        })
+    return {"price": price, "currency": "INR", "legs": legs}
+
+
+def test_flight_search_filters_maximum_stop_count_without_undocumented_cli_flag(monkeypatch):
+    _enable_cli(monkeypatch)
+    _mock_airports(monkeypatch)
+    calls = []
+    payload = {
+        "flights": [
+            _flight_with_segments("ORG", "DST", price=700),
+            _flight_with_segments("ORG", "HUB", "DST", price=500),
+            _flight_with_segments("ORG", "HUB", "HUB2", "DST", price=300),
+        ]
+    }
+
+    def mock_run(command, **kwargs):
+        calls.append(command)
+        return SimpleNamespace(stdout=json.dumps(payload))
+
+    monkeypatch.setattr(travel_apis.subprocess, "run", mock_run)
+    result = RealFlightSearchTool().execute(None, _flight_params(stops="1"))
+
+    assert [item["stops"] for item in result.data["items"]] == [0, 1]
+    assert "--stops" not in calls[0]
+
+
+def test_flight_search_stops_at_nonstop_when_requested(monkeypatch):
+    _enable_cli(monkeypatch)
+    _mock_airports(monkeypatch)
+    calls = []
+    payload = {
+        "flights": [
+            _flight_with_segments("ORG", "DST"),
+            _flight_with_segments("ORG", "HUB", "DST"),
+        ]
+    }
+
+    def mock_run(command, **kwargs):
+        calls.append(command)
+        return SimpleNamespace(stdout=json.dumps(payload))
+
+    monkeypatch.setattr(travel_apis.subprocess, "run", mock_run)
+    result = RealFlightSearchTool().execute(None, _flight_params(stops="nonstop"))
+
+    assert [item["stops"] for item in result.data["items"]] == [0]
+    assert calls[0][calls[0].index("--stops") + 1] == "nonstop"

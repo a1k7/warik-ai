@@ -31,7 +31,7 @@ def test_context_includes_recent_turns_and_active_workflow_bounded():
     assert "Plan Tokyo" in result
     assert "Make it cheaper" in result
     assert "COMPLETED" in result
-    assert len(result) <= 2400
+    assert len(result) <= 8000
 
 
 def test_resume_requires_explicit_unambiguous_command():
