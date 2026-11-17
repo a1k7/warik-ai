@@ -1178,6 +1178,12 @@ async def handle_message(
                 if preference.monthly_budget is not None else None
             ),
         }
+        try:
+            profile_defaults["local_datetime"] = datetime.now(
+                ZoneInfo(preference.timezone)
+            ).isoformat()
+        except Exception:
+            profile_defaults["local_datetime"] = None
         planner_context += (
             "\n\nUSER PROFILE DEFAULTS (advisory only; latest request overrides):\n"
             + str(profile_defaults)
