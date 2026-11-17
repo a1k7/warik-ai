@@ -1001,7 +1001,8 @@ async def handle_message(
 
     if decision.get("decision") == "clarification":
         return AgentMessageResponse(
-            reply=decision.get("reply") or "What detail should I use?"
+            reply=decision.get("reply") or "What detail should I use?",
+            structured_data=decision.get("structured_data"),
         )
 
     if decision.get("decision") == "workflow" and decision.get("plan"):
