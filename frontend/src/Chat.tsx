@@ -3,7 +3,7 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import {
   ArrowLeft, Send, MapPin, Plane, Building2, Car, Calendar, Star,
   Utensils, Bookmark, Map, Plus, Trash2, Menu, X, MessageSquare,
-  Check, ExternalLink, Paperclip, Loader2, Mic, Square
+  Check, ExternalLink, Paperclip, Loader2, Mic, Square, RefreshCw
 } from 'lucide-react';
 import { AIOrb } from './AIOrb';
 import { TripResultCard } from './components/TripResultCard';
@@ -17,7 +17,7 @@ import {
 } from './api';
 import { Conversation, Message } from './types';
 
-const ResultCards = ({ data, onSaveCommitment, savingCommitment }: { data: any; onSaveCommitment?: (proposal: any) => void; savingCommitment?: boolean }) => {
+const ResultCards = ({ data, onSaveCommitment, savingCommitment, onRefreshFlight }: { data: any; onSaveCommitment?: (proposal: any) => void; savingCommitment?: boolean; onRefreshFlight?: (offerId: string) => void }) => {
   if (!data) return null;
 
   if (data.commitment_proposal) {
@@ -267,15 +267,26 @@ const ResultCards = ({ data, onSaveCommitment, savingCommitment }: { data: any; 
               </div>
 
               <div className="flex justify-between items-center mt-2 pt-2 border-t border-jmuted/10">
-                {item.url && (
+                {item.offer_id && onRefreshFlight ? (
+                  <button
+                    type="button"
+                    onClick={() => onRefreshFlight(item.offer_id)}
+                    className="text-xs font-bold text-white bg-jprimary hover:bg-jsecondary px-3 py-1.5 rounded flex items-center gap-2"
+                  >
+                    Refresh live price <RefreshCw size={12} />
+                  </button>
+                ) : item.url ? (
                   <a
                     href={item.url}
                     target="_blank"
                     rel="noopener noreferrer"
                     className="text-xs font-bold text-white bg-jprimary hover:bg-jsecondary px-3 py-1.5 rounded flex items-center gap-2"
                   >
-                    Book Flight <ExternalLink size={12} />
+                    View external options <ExternalLink size={12} />
                   </a>
+                ) : null}
+                {item.expires_at && (
+                  <span className="text-[10px] text-jmuted">Offer expiry: {new Date(item.expires_at).toLocaleString('en-IN')}</span>
                 )}
                 {typeof item.stops === 'number' && (
                   <span className="text-xs text-jmuted">
@@ -417,6 +428,14 @@ export const Chat = () => {
     } catch (err) {
       setMessages(prev => [...prev, { id: Date.now() + 1, role: 'assistant', content: 'Error connecting to backend.', created_at: new Date().toISOString() }]);
     } finally { setIsLoading(false); }
+  };
+
+  const handleRefreshFlight = (offerId: string) => {
+    if (!activeConvId || isLoading || !offerId) return;
+    void executeSend(
+      `Please refresh this exact flight offer and show its current price and expiry: ${offerId}`,
+      activeConvId,
+    );
   };
 
   const handleSaveCommitment = async (message: Message, proposal: any) => {
@@ -717,7 +736,7 @@ export const Chat = () => {
                     <div className="prose prose-invert prose-sm max-w-none prose-a:text-jsecondary prose-a:underline prose-strong:text-white prose-p:mb-2 prose-p:last:mb-0">
                       <ReactMarkdown>{msg.content}</ReactMarkdown>
                     </div>
-                    {msg.structured_data && <ResultCards data={msg.structured_data} onSaveCommitment={(proposal) => handleSaveCommitment(msg, proposal)} savingCommitment={confirmationBusyId === msg.id} />}
+                    {msg.structured_data && <ResultCards data={msg.structured_data} onSaveCommitment={(proposal) => handleSaveCommitment(msg, proposal)} savingCommitment={confirmationBusyId === msg.id} onRefreshFlight={handleRefreshFlight} />}
                     {msg.needs_confirmation && msg.confirmation_token && msg.confirmation_status !== 'declined' && msg.confirmation_status !== 'approved' && (
                       <div className="mt-4 rounded-xl border border-amber-400/40 bg-amber-400/5 p-4" role="group" aria-label="Action approval">
                         <div className="flex items-start gap-2">

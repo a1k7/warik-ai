@@ -46,7 +46,7 @@ def compact_travel_result(value: Any) -> dict | None:
     if result_type == "flight_list":
         common["items"] = _compact_travel_items(
             value.get("items"),
-            ("price", "currency", "departure_time", "arrival_time", "stops", "url", "segments"),
+            ("offer_id", "expires_at", "price", "amount", "currency", "departure_time", "arrival_time", "stops", "url", "segments"),
         )
         for item in common["items"]:
             item["segments"] = _compact_travel_items(
@@ -64,7 +64,7 @@ def compact_travel_result(value: Any) -> dict | None:
         )
         common["flights"] = _compact_travel_items(
             value.get("flights"),
-            ("price", "currency", "departure_time", "arrival_time", "stops", "url", "segments"),
+            ("offer_id", "expires_at", "price", "amount", "currency", "departure_time", "arrival_time", "stops", "url", "segments"),
         )
         for item in common["flights"]:
             item["segments"] = _compact_travel_items(

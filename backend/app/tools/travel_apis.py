@@ -183,6 +183,16 @@ class FlightInput(BaseModel):
         pattern=r"^(?:[01]\d|2[0-3]):[0-5]\d$",
         description="Latest acceptable departure time at the origin airport, local HH:MM.",
     )
+    arrival_time_from: Optional[str] = Field(
+        default=None,
+        pattern=r"^(?:[01]\d|2[0-3]):[0-5]\d$",
+        description="Earliest acceptable arrival time at the destination airport, local HH:MM.",
+    )
+    arrival_time_to: Optional[str] = Field(
+        default=None,
+        pattern=r"^(?:[01]\d|2[0-3]):[0-5]\d$",
+        description="Latest acceptable arrival time at the destination airport, local HH:MM.",
+    )
     cabin_class: Optional[Literal["economy", "premium_economy", "business", "first"]] = Field(
         default=None,
         description="Requested cabin class, only when explicitly stated or saved in user preferences.",
@@ -197,7 +207,7 @@ class FlightInput(BaseModel):
     )
     passengers: int = Field(default=1, ge=1, le=9, description="Number of adult passengers.")
 
-    @field_validator("departure_time_from", "departure_time_to")
+    @field_validator("departure_time_from", "departure_time_to", "arrival_time_from", "arrival_time_to")
     @classmethod
     def validate_time_window_value(cls, value: Optional[str]) -> Optional[str]:
         if value is None:
@@ -388,6 +398,13 @@ class RealFlightSearchTool(BaseTool):
             if params.departure_time_to:
                 time_window["to"] = params.departure_time_to
             slice_data["departure_time"] = time_window
+        if params.arrival_time_from or params.arrival_time_to:
+            arrival_window = {}
+            if params.arrival_time_from:
+                arrival_window["from"] = params.arrival_time_from
+            if params.arrival_time_to:
+                arrival_window["to"] = params.arrival_time_to
+            slice_data["arrival_time"] = arrival_window
 
         request_data = {
             "slices": [slice_data],
@@ -436,19 +453,42 @@ class RealFlightSearchTool(BaseTool):
                 int(params.departure_time_to[:2]) * 60 + int(params.departure_time_to[3:])
                 if params.departure_time_to else None
             )
+            arrival_earliest = (
+                int(params.arrival_time_from[:2]) * 60 + int(params.arrival_time_from[3:])
+                if params.arrival_time_from else None
+            )
+            arrival_latest = (
+                int(params.arrival_time_to[:2]) * 60 + int(params.arrival_time_to[3:])
+                if params.arrival_time_to else None
+            )
+
+            def within_window(minutes, lower, upper):
+                if lower is None and upper is None:
+                    return True
+                if minutes is None:
+                    return False
+                if lower is not None and upper is not None and lower > upper:
+                    return minutes >= lower or minutes <= upper
+                return not ((lower is not None and minutes < lower) or (upper is not None and minutes > upper))
+
+            def arrival_minutes(item: dict) -> int | None:
+                value = item.get("arrival_time")
+                if not value:
+                    return None
+                try:
+                    parsed = datetime.strptime(value, "%Y-%m-%d %H:%M")
+                    return parsed.hour * 60 + parsed.minute
+                except ValueError:
+                    return None
+
             filtered = []
             for item in items:
                 minutes = departure_minutes(item)
-                if (earliest is not None or latest is not None) and minutes is None:
+                arr_minutes = arrival_minutes(item)
+                if not within_window(minutes, earliest, latest):
                     continue
-                if minutes is not None:
-                    if earliest is not None and latest is not None and earliest > latest:
-                        if not (minutes >= earliest or minutes <= latest):
-                            continue
-                    elif earliest is not None and minutes < earliest:
-                        continue
-                    elif latest is not None and minutes > latest:
-                        continue
+                if not within_window(arr_minutes, arrival_earliest, arrival_latest):
+                    continue
                 if params.stops == "nonstop" and item["stops"] != 0:
                     continue
                 if params.stops in {"1", "2"} and item["stops"] > int(params.stops):
@@ -688,27 +728,45 @@ class RealFlightSearchTool(BaseTool):
 
             earliest = clock_minutes(params.departure_time_from)
             latest = clock_minutes(params.departure_time_to)
+            arrival_earliest = clock_minutes(params.arrival_time_from)
+            arrival_latest = clock_minutes(params.arrival_time_to)
+
+            def arrival_minutes(flight: dict) -> Optional[int]:
+                legs = flight.get("legs") or []
+                raw = (legs[-1] or {}).get("arrival_time") if legs else None
+                if not isinstance(raw, str) or not raw.strip():
+                    return None
+                try:
+                    parsed = datetime.fromisoformat(raw.strip().replace("Z", "+00:00"))
+                    return parsed.hour * 60 + parsed.minute
+                except ValueError:
+                    return None
+
+            def within_window(minutes, lower, upper):
+                if lower is None and upper is None:
+                    return True
+                if minutes is None:
+                    return False
+                if lower is not None and upper is not None and lower > upper:
+                    return minutes >= lower or minutes <= upper
+                return not ((lower is not None and minutes < lower) or (upper is not None and minutes > upper))
+
             time_filtered = []
             for flight in valid:
-                minutes = departure_minutes(flight)
-                # Never silently accept a result whose time cannot be checked
-                # when the traveller explicitly requested a time window.
-                if (earliest is not None or latest is not None) and minutes is None:
+                dep_minutes = departure_minutes(flight)
+                arr_minutes = arrival_minutes(flight)
+                # Provider results without a verifiable requested time are excluded.
+                if not within_window(dep_minutes, earliest, latest):
                     continue
-                if minutes is not None:
-                    if earliest is not None and latest is not None and earliest > latest:
-                        if not (minutes >= earliest or minutes <= latest):
-                            continue
-                    else:
-                        if earliest is not None and minutes < earliest:
-                            continue
-                        if latest is not None and minutes > latest:
-                            continue
+                if not within_window(arr_minutes, arrival_earliest, arrival_latest):
+                    continue
                 time_filtered.append(flight)
 
             provider_route_matches = len(valid)
             valid = time_filtered
-            matching_time_window = earliest is not None or latest is not None
+            matching_time_window = any(value is not None for value in (
+                earliest, latest, arrival_earliest, arrival_latest
+            ))
 
             if not valid:
                 return ToolResult(
