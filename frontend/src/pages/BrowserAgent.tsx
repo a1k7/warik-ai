@@ -42,7 +42,7 @@ const DEFAULT_GOAL = 'Find the cheapest non-stop flight from Delhi to Mumbai tom
 const terminal = (status: string) => ['done', 'failed', 'denied'].includes(status);
 const statusLabel = (status: string) => {
   const labels: Record<string, string> = { queued: 'Queued', running: 'Running', waiting_approval: 'Awaiting approval', done: 'Completed', failed: 'Failed', denied: 'Denied' };
-  return labels[status] || status.replaceAll('_', ' ');
+  return labels[status] || status.replace(/_/g, ' ');
 };
 
 function Screenshot({ url, className = '' }: { url?: string | null; className?: string }) {
