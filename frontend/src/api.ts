@@ -36,6 +36,21 @@ export interface CurrentUser {
 
 export const fetchCurrentUser = async (): Promise<CurrentUser> =>
   (await api.get<CurrentUser>('/auth/me')).data;
+
+export interface CapabilityStatusItem {
+  id: string;
+  label: string;
+  status: string;
+  detail: string;
+}
+export interface CapabilityStatusResponse {
+  services: CapabilityStatusItem[];
+  note: string;
+}
+export const capabilitiesApi = {
+  status: async () =>
+    (await api.get<CapabilityStatusResponse>('/health/capabilities')).data,
+};
 export const saveFavoriteRestaurant = async (name: string, location: string) => (await api.post('/food/favorites', { name, location })).data;
 
 
