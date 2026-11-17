@@ -191,9 +191,9 @@ class FlightInput(BaseModel):
         default=None,
         description="Maximum stop preference: nonstop, one stop, two stops, or any.",
     )
-    sort_by: Literal["price", "departure_time"] = Field(
-        default="price",
-        description="How to rank matching results; never compare unlike currencies.",
+    sort_by: Optional[Literal["price", "departure_time"]] = Field(
+        default=None,
+        description="Optional ranking preference. If omitted, preserve provider ranking.",
     )
 
     @field_validator("departure_time_from", "departure_time_to")
@@ -206,16 +206,6 @@ class FlightInput(BaseModel):
         except ValueError as exc:
             raise ValueError("Departure times must use 24-hour HH:MM format.") from exc
         return value
-
-    @field_validator("departure_time_to")
-    @classmethod
-    def require_ordered_time_window(cls, value: Optional[str], info):
-        earliest = info.data.get("departure_time_from")
-        if value is not None and earliest is not None:
-            # A window that crosses midnight is valid, e.g. 22:00–01:00.
-            return value
-        return value
-
 
 class RealFlightSearchTool(BaseTool):
     name = "search_flights_real"
@@ -438,7 +428,9 @@ class RealFlightSearchTool(BaseTool):
                             continue
                 time_filtered.append(flight)
 
+            provider_route_matches = len(valid)
             valid = time_filtered
+            matching_time_window = earliest is not None or latest is not None
 
             if not valid:
                 return ToolResult(
@@ -455,8 +447,7 @@ class RealFlightSearchTool(BaseTool):
                         "live_inventory": True,
                         "resolution_status": (
                             "time_filter_no_results"
-                            if valid == []
-                            and (params.departure_time_from or params.departure_time_to)
+                            if provider_route_matches > 0 and matching_time_window
                             else "no_results"
                         ),
                         "filters_applied": params.model_dump(exclude_none=True),
@@ -474,8 +465,14 @@ class RealFlightSearchTool(BaseTool):
             }
             if params.sort_by == "departure_time":
                 valid.sort(key=lambda item: departure_minutes(item) if departure_minutes(item) is not None else 24 * 60)
-            elif len(currencies) == 1 and "" not in currencies:
-                valid.sort(key=lambda item: float(item.get("price") or 0) if str(item.get("price") or "").replace(".", "", 1).isdigit() else float("inf"))
+            elif params.sort_by == "price" and len(currencies) == 1 and "" not in currencies:
+                valid.sort(
+                    key=lambda item: (
+                        float(item.get("price"))
+                        if str(item.get("price") or "").replace(".", "", 1).isdigit()
+                        else float("inf")
+                    )
+                )
 
             structured = []
 
