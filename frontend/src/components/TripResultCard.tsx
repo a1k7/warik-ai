@@ -170,6 +170,7 @@ export const TripResultCard = ({ data }: { data: TripData }) => {
 
   const hotels = data.hotels || [];
   const days = data.itinerary?.days || [];
+  const flightSearches = data.flight_searches ?? [];
 
   const displayTitle =
     !data.destination || data.destination === 'Your Trip'
@@ -390,20 +391,20 @@ export const TripResultCard = ({ data }: { data: TripData }) => {
 
 
       {/* Provider fallback: retain the route handoff when structured live offers are unavailable. */}
-      {(!data.flights || data.flights.length === 0) && data.flight_searches?.length > 0 && (
+      {(!data.flights || data.flights.length === 0) && flightSearches.length > 0 && (
         <section className="rounded-[22px] border border-[#702D3C]/40 bg-[#30252A] p-5 sm:p-6">
           <div className="flex items-center gap-2 text-[#D6A8B3] text-[10px] uppercase tracking-[0.2em] font-bold mb-2">
             <Plane size={14} /> Flight search
           </div>
           <h3 className="text-lg font-semibold">Check current flight options</h3>
           <p className="text-xs text-[#BCA7AF] mt-2">
-            {data.flight_searches[0].live_inventory === false
+            {flightSearches[0].live_inventory === false
               ? "Live flight offers were not available from the connected provider in this session. This link opens an external route search; it is not a verified fare quote."
               : "The connected provider returned no matching flight offers. You can also check the route directly."}
           </p>
-          {data.flight_searches[0].search_url && (
+          {flightSearches[0].search_url && (
             <a
-              href={data.flight_searches[0].search_url}
+              href={flightSearches[0].search_url}
               target="_blank"
               rel="noopener noreferrer"
               className="mt-4 inline-flex items-center gap-2 rounded-xl bg-[#702D3C] hover:bg-[#873D50] px-4 py-3 text-xs font-semibold text-white"
