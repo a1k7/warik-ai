@@ -1179,7 +1179,7 @@ async def handle_message(
             ),
         }
         planner_context += (
-            "\\n\\nUSER PROFILE DEFAULTS (advisory only; latest request overrides):\\n"
+            "\n\nUSER PROFILE DEFAULTS (advisory only; latest request overrides):\n"
             + str(profile_defaults)
         )
 
