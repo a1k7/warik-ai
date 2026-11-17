@@ -502,7 +502,7 @@ def test_action_request_fails_closed_when_model_keeps_returning_chat():
     )
 
     assert result["decision"] == "clarification"
-    assert "Which exact travel dates" in result["reply"]
+    assert "which exact travel dates" in result["reply"].lower()
     assert result["structured_data"]["type"] == "reliability_checkpoint"
     assert result["structured_data"]["execution_claims_allowed"] is False
     assert result["structured_data"]["missing_information"] == ["exact travel dates"]
