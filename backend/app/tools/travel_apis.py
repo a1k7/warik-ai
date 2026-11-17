@@ -11,8 +11,9 @@ import math
 from urllib.parse import quote_plus, quote
 from typing import Optional
 from datetime import datetime
+from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from app.tools.base import BaseTool, ToolContext, ToolResult
 from app.core.config import settings
@@ -169,9 +170,51 @@ def haversine_km(lat1, lon1, lat2, lon2):
 
 
 class FlightInput(BaseModel):
-    origin: str = Field(...)
-    destination: str = Field(...)
-    date: str = Field(...)
+    origin: str = Field(..., description="Departure city or verified airport code.")
+    destination: str = Field(..., description="Arrival city or verified airport code.")
+    date: str = Field(..., description="Local departure date in YYYY-MM-DD.")
+    departure_time_from: Optional[str] = Field(
+        default=None,
+        pattern=r"^(?:[01]\d|2[0-3]):[0-5]\d$",
+        description="Earliest acceptable departure time at the origin airport, local HH:MM.",
+    )
+    departure_time_to: Optional[str] = Field(
+        default=None,
+        pattern=r"^(?:[01]\d|2[0-3]):[0-5]\d$",
+        description="Latest acceptable departure time at the origin airport, local HH:MM.",
+    )
+    cabin_class: Optional[Literal["economy", "premium_economy", "business", "first"]] = Field(
+        default=None,
+        description="Requested cabin class, only when explicitly stated or saved in user preferences.",
+    )
+    stops: Optional[Literal["any", "nonstop", "1", "2"]] = Field(
+        default=None,
+        description="Maximum stop preference: nonstop, one stop, two stops, or any.",
+    )
+    sort_by: Literal["price", "departure_time"] = Field(
+        default="price",
+        description="How to rank matching results; never compare unlike currencies.",
+    )
+
+    @field_validator("departure_time_from", "departure_time_to")
+    @classmethod
+    def validate_time_window_value(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        try:
+            datetime.strptime(value, "%H:%M")
+        except ValueError as exc:
+            raise ValueError("Departure times must use 24-hour HH:MM format.") from exc
+        return value
+
+    @field_validator("departure_time_to")
+    @classmethod
+    def require_ordered_time_window(cls, value: Optional[str], info):
+        earliest = info.data.get("departure_time_from")
+        if value is not None and earliest is not None:
+            # A window that crosses midnight is valid, e.g. 22:00–01:00.
+            return value
+        return value
 
 
 class RealFlightSearchTool(BaseTool):
@@ -312,17 +355,23 @@ class RealFlightSearchTool(BaseTool):
                 },
             )
 
+        command = [
+            "trvl",
+            "flights",
+            origin_iata,
+            dest_iata,
+            params.date,
+            "--format",
+            "json",
+        ]
+        if params.cabin_class:
+            command.extend(["--cabin", params.cabin_class])
+        if params.stops and params.stops != "any":
+            command.extend(["--stops", params.stops])
+
         try:
             result = subprocess.run(
-                [
-                    "trvl",
-                    "flights",
-                    origin_iata,
-                    dest_iata,
-                    params.date,
-                    "--format",
-                    "json",
-                ],
+                command,
                 capture_output=True,
                 text=True,
                 check=True,
@@ -342,22 +391,54 @@ class RealFlightSearchTool(BaseTool):
             )
 
             valid = []
-
             for flight in flights:
                 legs = flight.get("legs", [])
-
                 if not legs:
                     continue
-
                 if (
-                    legs[0].get("departure_airport", {}).get(
-                        "code", ""
-                    ) == origin_iata
-                    and legs[-1].get("arrival_airport", {}).get(
-                        "code", ""
-                    ) == dest_iata
+                    legs[0].get("departure_airport", {}).get("code", "") == origin_iata
+                    and legs[-1].get("arrival_airport", {}).get("code", "") == dest_iata
                 ):
                     valid.append(flight)
+
+            def departure_minutes(flight: dict) -> Optional[int]:
+                legs = flight.get("legs") or []
+                raw = (legs[0] or {}).get("departure_time") if legs else None
+                if not isinstance(raw, str) or not raw.strip():
+                    return None
+                try:
+                    parsed = datetime.fromisoformat(raw.strip().replace("Z", "+00:00"))
+                    return parsed.hour * 60 + parsed.minute
+                except ValueError:
+                    return None
+
+            def clock_minutes(value: Optional[str]) -> Optional[int]:
+                if value is None:
+                    return None
+                hour, minute = (int(part) for part in value.split(":"))
+                return hour * 60 + minute
+
+            earliest = clock_minutes(params.departure_time_from)
+            latest = clock_minutes(params.departure_time_to)
+            time_filtered = []
+            for flight in valid:
+                minutes = departure_minutes(flight)
+                # Never silently accept a result whose time cannot be checked
+                # when the traveller explicitly requested a time window.
+                if (earliest is not None or latest is not None) and minutes is None:
+                    continue
+                if minutes is not None:
+                    if earliest is not None and latest is not None and earliest > latest:
+                        if not (minutes >= earliest or minutes <= latest):
+                            continue
+                    else:
+                        if earliest is not None and minutes < earliest:
+                            continue
+                        if latest is not None and minutes > latest:
+                            continue
+                time_filtered.append(flight)
+
+            valid = time_filtered
 
             if not valid:
                 return ToolResult(
@@ -372,7 +453,13 @@ class RealFlightSearchTool(BaseTool):
                         "items": [],
                         "search_url": _flight_search_url(params),
                         "live_inventory": True,
-                        "resolution_status": "no_results",
+                        "resolution_status": (
+                            "time_filter_no_results"
+                            if valid == []
+                            and (params.departure_time_from or params.departure_time_to)
+                            else "no_results"
+                        ),
+                        "filters_applied": params.model_dump(exclude_none=True),
                         "origin_airport": origin_airports[0],
                         "destination_airport": destination_airports[0],
                         "origin_airport_candidates": origin_airports,
@@ -380,9 +467,19 @@ class RealFlightSearchTool(BaseTool):
                     },
                 )
 
+            # Price ranking is only meaningful when all offers use one currency.
+            currencies = {
+                str(flight.get("currency") or "").upper().strip()
+                for flight in valid
+            }
+            if params.sort_by == "departure_time":
+                valid.sort(key=lambda item: departure_minutes(item) if departure_minutes(item) is not None else 24 * 60)
+            elif len(currencies) == 1 and "" not in currencies:
+                valid.sort(key=lambda item: float(item.get("price") or 0) if str(item.get("price") or "").replace(".", "", 1).isdigit() else float("inf"))
+
             structured = []
 
-            for flight in valid[:3]:
+            for flight in valid[:5]:
                 legs = flight.get("legs", [])
 
                 try:
@@ -433,6 +530,8 @@ class RealFlightSearchTool(BaseTool):
                     {
                         "price": display_price,
                         "currency": raw_cur or None,
+                        "departure_time": segments[0]["departure"] if segments else None,
+                        "arrival_time": segments[-1]["arrival"] if segments else None,
                         "segments": segments,
                         "stops": len(segments) - 1,
                         "url": booking_url,
@@ -447,6 +546,8 @@ class RealFlightSearchTool(BaseTool):
                 data={
                     "type": "flight_list",
                     "items": structured,
+                    "filters_applied": params.model_dump(exclude_none=True),
+                    "result_count": len(valid),
                     "origin_airport": origin_airports[0],
                     "destination_airport": destination_airports[0],
                     "origin_airport_candidates": origin_airports,
