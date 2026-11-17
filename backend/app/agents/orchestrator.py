@@ -21,7 +21,7 @@ from app.agents.deterministic_parser import (
     parse as parse_deterministic,
 )
 from app.core.config import settings
-from app.models import User, Conversation, Workflow, Goal
+from app.models import User, Conversation, Workflow, Goal, UserPreference
 from app.models.action_log import ActionLog
 from app.schemas.agent import AgentMessageResponse, ToolCallInfo
 from app.tools.base import ToolContext
@@ -1160,6 +1160,28 @@ async def handle_message(
     )
     if saved_memory_context:
         planner_context += "\n\n" + saved_memory_context
+
+    # Explicit profile preferences are bounded, user-scoped context. They are
+    # defaults only; the latest instruction in the conversation always wins.
+    preference = (
+        db.query(UserPreference)
+        .filter(UserPreference.user_id == user.id)
+        .one_or_none()
+    )
+    if preference:
+        profile_defaults = {
+            "preferred_language": preference.preferred_language,
+            "default_currency": preference.default_currency,
+            "timezone": preference.timezone,
+            "monthly_budget": (
+                str(preference.monthly_budget)
+                if preference.monthly_budget is not None else None
+            ),
+        }
+        planner_context += (
+            "\\n\\nUSER PROFILE DEFAULTS (advisory only; latest request overrides):\\n"
+            + str(profile_defaults)
+        )
 
     if active_workflow_id:
         active_workflow = db.get(Workflow, active_workflow_id)
