@@ -145,8 +145,8 @@ python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 playwright install chromium
-cp ../.env.example .env
-# Keep AGENT_DEMO_MODE=true and the localhost-only AGENT_ALLOWED_DOMAINS defaults.
+if [ ! -f .env ]; then cp ../.env.example .env; fi
+# Preserve an existing .env. Keep AGENT_DEMO_MODE=true and localhost-only AGENT_ALLOWED_DOMAINS.
 uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
 ```
 
