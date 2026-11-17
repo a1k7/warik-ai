@@ -63,7 +63,10 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v4
       - name: Validate production Compose configuration
-        run: docker compose --env-file .env.production.example -f docker-compose.production.yml config --quiet
+        run: |
+          cp .env.production.example .env.production
+          docker compose --env-file .env.production -f docker-compose.production.yml config --quiet
+          rm .env.production
       - name: Build backend image
         run: docker build -f backend/Dockerfile -t warik-ai-backend:ci .
       - name: Build frontend image
