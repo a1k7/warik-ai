@@ -356,8 +356,10 @@ class RealFlightSearchTool(BaseTool):
         ]
         if params.cabin_class:
             command.extend(["--cabin", params.cabin_class])
-        if params.stops and params.stops != "any":
-            command.extend(["--stops", params.stops])
+        # The CLI documents the "nonstop" filter. One/two-stop limits are
+        # enforced against the returned segment count below.
+        if params.stops == "nonstop":
+            command.extend(["--stops", "nonstop"])
 
         try:
             result = subprocess.run(
@@ -385,11 +387,15 @@ class RealFlightSearchTool(BaseTool):
                 legs = flight.get("legs", [])
                 if not legs:
                     continue
-                if (
+                if not (
                     legs[0].get("departure_airport", {}).get("code", "") == origin_iata
                     and legs[-1].get("arrival_airport", {}).get("code", "") == dest_iata
                 ):
-                    valid.append(flight)
+                    continue
+                stop_limit = {"nonstop": 0, "1": 1, "2": 2}.get(params.stops)
+                if stop_limit is not None and len(legs) - 1 > stop_limit:
+                    continue
+                valid.append(flight)
 
             def departure_minutes(flight: dict) -> Optional[int]:
                 legs = flight.get("legs") or []
