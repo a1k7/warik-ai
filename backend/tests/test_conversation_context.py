@@ -64,3 +64,46 @@ def test_previous_request_is_not_duplicated_in_recent_history():
     result = build_conversation_context(conversation, "Make it cheaper")
     assert result.count("Plan Tokyo") == 1
     assert result.count("Make it cheaper") == 1
+
+
+
+def test_context_carries_bounded_flight_options_for_follow_up():
+    flight_result = {
+        "type": "flight_list",
+        "live_inventory": True,
+        "filters_applied": {"departure_time_from": "18:00"},
+        "items": [
+            {
+                "price": "₹5,200",
+                "currency": "INR",
+                "departure_time": "2026-12-20 19:10",
+                "arrival_time": "2026-12-20 21:00",
+                "stops": 0,
+                "url": "https://example.test/flight/offer-1",
+                "segments": [{
+                    "airline": "Example Air",
+                    "flight_number": "EX101",
+                    "origin": "BOM",
+                    "destination": "DEL",
+                    "departure": "2026-12-20 19:10",
+                    "arrival": "2026-12-20 21:00",
+                }],
+                "provider_private_payload": {"token": "must-not-copy"},
+            }
+        ],
+    }
+    conversation = SimpleNamespace(
+        state_json={},
+        messages=[
+            SimpleNamespace(role="user", content="Find evening flights."),
+            SimpleNamespace(role="assistant", content="I found flight options.", structured_data=flight_result),
+            SimpleNamespace(role="user", content="Use the cheaper one and find a cab."),
+        ],
+    )
+
+    result = build_conversation_context(conversation, "Use the cheaper one and find a cab.")
+
+    assert "Previous travel options" in result
+    assert "2026-12-20 19:10" in result
+    assert "offer-1" in result
+    assert "must-not-copy" not in result

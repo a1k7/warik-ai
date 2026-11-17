@@ -69,9 +69,14 @@ TRAVEL RULES:
    - origin
    - destination
    - date (one YYYY-MM-DD date per step)
+   - optional departure_time_from / departure_time_to only for a user-stated time window
+   - optional cabin_class / stops only when explicitly stated or saved by the user
+   - sort_by only when the user prioritizes price or departure time
+8a. If an exact departure time is stated without flexibility, ask whether it is exact or a nearby time window; do not widen it silently.
 9. For cab links, use get_cab_links with:
    - pickup_location
    - dropoff_location
+   Generate a handoff only when both endpoints are explicit or returned by a selected result. This tool does not provide a live fare quote or book a ride.
 10. Supplementary flight and cab steps must be optional.
 11. Supplementary discovery steps must not depend on one another.
 12. The itinerary is required.
@@ -415,7 +420,8 @@ class GoalInterpreter:
         conversation_context: str = "",
     ) -> dict:
         tools_desc = "\n".join(
-            f"- {tool.name}: {tool.description}"
+            f"- {tool.name}: {tool.description}\n"
+            f"  Input schema: {json.dumps(tool.input_schema.model_json_schema(), ensure_ascii=False)}"
             for tool in registry._tools.values()
         )
 
