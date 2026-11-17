@@ -17,7 +17,7 @@ import {
 } from './api';
 import { Conversation, Message } from './types';
 
-const ResultCards = ({ data, onSaveCommitment, savingCommitment, onRefreshFlight }: { data: any; onSaveCommitment?: (proposal: any) => void; savingCommitment?: boolean; onRefreshFlight?: (offerId: string) => void }) => {
+const ResultCards = ({ data, onSaveCommitment, savingCommitment, onRefreshFlight, onSelectFlight }: { data: any; onSaveCommitment?: (proposal: any) => void; savingCommitment?: boolean; onRefreshFlight?: (offerId: string) => void; onSelectFlight?: (item: any) => void }) => {
   if (!data) return null;
 
   if (data.commitment_proposal) {
@@ -247,6 +247,9 @@ const ResultCards = ({ data, onSaveCommitment, savingCommitment, onRefreshFlight
                 <h4 className="font-bold text-white text-sm flex items-center gap-2">
                   <Plane size={16} className="text-jprimary" />
                   {item.segments?.[0]?.airline || 'Flight'}
+                  {item.segments?.[0]?.flight_number && (
+                    <span className="text-[10px] text-jmuted font-medium">{item.segments[0].flight_number}</span>
+                  )}
                 </h4>
                 <span className="text-xs font-bold text-jsecondary bg-jprimary/10 px-2 py-1 rounded">
                   {item.price || 'Price unavailable'}
@@ -266,7 +269,16 @@ const ResultCards = ({ data, onSaveCommitment, savingCommitment, onRefreshFlight
                 ))}
               </div>
 
-              <div className="flex justify-between items-center mt-2 pt-2 border-t border-jmuted/10">
+              <div className="flex flex-wrap justify-between items-center gap-2 mt-2 pt-2 border-t border-jmuted/10">
+                {item.offer_id && onSelectFlight && (
+                  <button
+                    type="button"
+                    onClick={() => onSelectFlight(item)}
+                    className="text-xs font-bold text-white bg-jprimary hover:bg-jsecondary px-3 py-1.5 rounded flex items-center gap-2"
+                  >
+                    Continue with this flight <Check size={12} />
+                  </button>
+                )}
                 {item.offer_id && onRefreshFlight ? (
                   <button
                     type="button"
@@ -428,6 +440,27 @@ export const Chat = () => {
     } catch (err) {
       setMessages(prev => [...prev, { id: Date.now() + 1, role: 'assistant', content: 'Error connecting to backend.', created_at: new Date().toISOString() }]);
     } finally { setIsLoading(false); }
+  };
+
+  const handleSelectFlight = (item: any) => {
+    if (!activeConvId || isLoading || !item?.offer_id) return;
+    const firstSegment = item.segments?.[0] || {};
+    const lastSegment = item.segments?.[item.segments.length - 1] || {};
+    const details = [
+      firstSegment.airline || 'Airline not supplied',
+      firstSegment.flight_number || '',
+      firstSegment.origin && lastSegment.destination
+        ? `${firstSegment.origin} to ${lastSegment.destination}`
+        : '',
+      item.departure_time ? `departure ${item.departure_time}` : '',
+      item.arrival_time ? `arrival ${item.arrival_time}` : '',
+      item.price || '',
+    ].filter(Boolean).join(', ');
+
+    void executeSend(
+      `I select the flight offer ${item.offer_id} (${details}). Keep this exact offer as my preferred option in this conversation, but do not book it. Tell me the next useful step and ask only for missing details needed for any airport transfer or hotel planning. Do not assume a hotel, pickup point or drop-off location.`,
+      activeConvId,
+    );
   };
 
   const handleRefreshFlight = (offerId: string) => {
@@ -736,7 +769,7 @@ export const Chat = () => {
                     <div className="prose prose-invert prose-sm max-w-none prose-a:text-jsecondary prose-a:underline prose-strong:text-white prose-p:mb-2 prose-p:last:mb-0">
                       <ReactMarkdown>{msg.content}</ReactMarkdown>
                     </div>
-                    {msg.structured_data && <ResultCards data={msg.structured_data} onSaveCommitment={(proposal) => handleSaveCommitment(msg, proposal)} savingCommitment={confirmationBusyId === msg.id} onRefreshFlight={handleRefreshFlight} />}
+                    {msg.structured_data && <ResultCards data={msg.structured_data} onSaveCommitment={(proposal) => handleSaveCommitment(msg, proposal)} savingCommitment={confirmationBusyId === msg.id} onRefreshFlight={handleRefreshFlight} onSelectFlight={handleSelectFlight} />}
                     {msg.needs_confirmation && msg.confirmation_token && msg.confirmation_status !== 'declined' && msg.confirmation_status !== 'approved' && (
                       <div className="mt-4 rounded-xl border border-amber-400/40 bg-amber-400/5 p-4" role="group" aria-label="Action approval">
                         <div className="flex items-start gap-2">
