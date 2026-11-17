@@ -215,7 +215,7 @@ class FlightInput(BaseModel):
         try:
             datetime.strptime(value, "%H:%M")
         except ValueError as exc:
-            raise ValueError("Departure times must use 24-hour HH:MM format.") from exc
+            raise ValueError("Flight times must use 24-hour HH:MM format.") from exc
         return value
 
 
@@ -296,9 +296,8 @@ class RealFlightSearchTool(BaseTool):
     name = "search_flights_real"
 
     description = (
-        "Search real-time flight options and return provider/Google Flights "
-        "booking links. Does not reserve a seat, issue a ticket, "
-        "or process payment."
+        "Search current flight offers using the configured provider. Returns live offer details when available. "
+        "Does not create a booking, issue a ticket, or process payment."
     )
 
     input_schema = FlightInput
@@ -409,8 +408,9 @@ class RealFlightSearchTool(BaseTool):
         request_data = {
             "slices": [slice_data],
             "passengers": [{"type": "adult"} for _ in range(params.passengers)],
-            "max_connections": {"nonstop": 0, "1": 1, "2": 2}.get(params.stops, 2),
         }
+        if params.stops in {"nonstop", "1", "2"}:
+            request_data["max_connections"] = {"nonstop": 0, "1": 1, "2": 2}[params.stops]
         if params.cabin_class:
             request_data["cabin_class"] = params.cabin_class
 
