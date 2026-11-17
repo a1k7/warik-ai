@@ -473,6 +473,11 @@ export const TripResultCard = ({
                       {group.date && (
                         <p className="text-[11px] text-[#BCA7AF] mt-1">{group.date}</p>
                       )}
+                      {Number(group.filters_applied?.passengers) > 0 && (
+                        <p className="text-[10px] text-[#BCA7AF]/80 mt-1">
+                          Prices for {Number(group.filters_applied.passengers)} adult{Number(group.filters_applied.passengers) === 1 ? '' : 's'}
+                        </p>
+                      )}
                     </div>
                     {group.source && <span className="text-[10px] text-[#BCA7AF]">{group.source}</span>}
                   </div>
