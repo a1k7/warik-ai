@@ -78,9 +78,15 @@ Do not guess.
 
 
 class OllamaProvider:
-    def __init__(self, base_url: str, model: str):
+    def __init__(
+        self,
+        base_url: str,
+        model: str,
+        planner_model: str | None = None,
+    ):
         self.base_url = base_url.rstrip("/")
         self.model = model
+        self.planner_model = (planner_model or model).strip()
         self.num_ctx = settings.ollama_num_ctx
         self.num_predict = settings.ollama_num_predict
 
@@ -98,7 +104,7 @@ class OllamaProvider:
         """Raw call to Ollama, used by goal and task planners."""
         try:
             payload = {
-                "model": self.model,
+                "model": self.planner_model,
                 "messages": [
                     {"role": "system", "content": system},
                     {"role": "user", "content": user},
@@ -294,6 +300,7 @@ def get_provider():
         return OllamaProvider(
             base_url=settings.ollama_base_url,
             model=settings.ollama_model,
+            planner_model=settings.ollama_planner_model or settings.ollama_model,
         )
 
     if provider == "groq":
