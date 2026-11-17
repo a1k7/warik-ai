@@ -13,6 +13,8 @@ class FakeProvider:
 
     async def _call(self, system, user, force_json=False):
         self.calls.append((system, user, force_json))
+        if isinstance(self.response, list):
+            return self.response.pop(0)
         return self.response
 
 
@@ -350,3 +352,54 @@ def test_interpret_uses_the_callers_local_calendar_date():
         "plan": None,
     }
     assert "CURRENT DATE: 2026-12-11" in provider.calls[0][0]
+
+
+
+def test_prompt_manifest_removes_schema_noise_but_keeps_tool_contract():
+    planner = _planner()
+    manifest = planner._capability_manifest()
+    prompt_manifest = planner._prompt_manifest(manifest)
+    task = next(item for item in prompt_manifest if item["name"] == "create_task")
+
+    assert "properties" in task["input_schema"]
+    assert "title" in task["input_schema"]["properties"]
+    assert "title" in task["input_schema"].get("required", [])
+    assert "$schema" not in task["input_schema"]
+    assert task["is_mutating"] is True or task["requires_confirmation"] is True
+
+
+def test_interpret_repairs_invalid_json_once():
+    from asyncio import run
+
+    provider = FakeProvider([
+        "This is not valid JSON",
+        json.dumps({"decision": "chat", "reply": "Hello from the repaired response."}),
+    ])
+    planner = UniversalTaskPlanner(provider=provider, tool_registry=registry)
+
+    result = run(planner.interpret("Hello"))
+
+    assert result == {
+        "decision": "chat",
+        "reply": "Hello from the repaired response.",
+        "plan": None,
+    }
+    assert len(provider.calls) == 2
+    assert provider.calls[0][2] is True
+    assert provider.calls[1][2] is True
+    assert "OUTPUT REPAIR MODE" in provider.calls[1][0]
+    assert "Previous invalid model output" in provider.calls[1][1]
+
+
+def test_interpret_accepts_json_with_a_short_preamble_and_fence():
+    provider = FakeProvider(
+        'Here is the result:\n```json\n'
+        + json.dumps({"decision": "chat", "reply": "Ready."})
+        + '\n```'
+    )
+    planner = UniversalTaskPlanner(provider=provider, tool_registry=registry)
+
+    result = __import__("asyncio").run(planner.interpret("Hi"))
+
+    assert result == {"decision": "chat", "reply": "Ready.", "plan": None}
+    assert len(provider.calls) == 1
