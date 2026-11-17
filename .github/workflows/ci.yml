@@ -55,3 +55,16 @@ jobs:
         run: npm ci
       - name: Build frontend
         run: npm run build
+
+  containers:
+    name: Production container builds
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Validate production Compose configuration
+        run: docker compose --env-file .env.production.example -f docker-compose.production.yml config --quiet
+      - name: Build backend image
+        run: docker build -f backend/Dockerfile -t warik-ai-backend:ci .
+      - name: Build frontend image
+        run: docker build --build-arg VITE_API_BASE_URL=https://api.example.com/api -f frontend/Dockerfile -t warik-ai-frontend:ci .
