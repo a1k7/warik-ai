@@ -449,3 +449,91 @@ def test_compact_schema_preserves_tool_defaults_and_property_names():
     assert "examples" not in compact
     assert compact["properties"]["title"]["title"] == "Task title"
     assert compact["properties"]["title"]["default"] == "Untitled"
+
+
+
+def test_plain_explanation_does_not_require_registered_capability():
+    assert not UniversalTaskPlanner.requires_registered_capability(
+        "Explain how overnight trains work."
+    )
+
+
+def test_real_world_trip_planning_requires_registered_capability():
+    assert UniversalTaskPlanner.requires_registered_capability(
+        "Plan a 3-day trip from Bhopal to Jaipur with hotels and train travel."
+    )
+
+
+def test_action_request_that_model_routes_to_chat_is_replanned():
+    provider = FakeProvider([
+        json.dumps({"decision": "chat", "reply": "Here is a made-up train plan."}),
+        json.dumps({
+            "decision": "clarification",
+            "reply": "Which exact travel dates should I use?",
+        }),
+    ])
+    planner = UniversalTaskPlanner(provider=provider, tool_registry=registry)
+
+    result = __import__("asyncio").run(
+        planner.interpret(
+            "Plan a 3-day trip from Bhopal to Jaipur.",
+            current_date=date(2026, 11, 17),
+        )
+    )
+
+    assert result["decision"] == "clarification"
+    assert result["reply"] == "Which exact travel dates should I use?"
+    assert len(provider.calls) == 2
+    assert "MANDATORY EXECUTION BOUNDARY" in provider.calls[1][0]
+
+
+def test_action_request_fails_closed_when_model_keeps_returning_chat():
+    provider = FakeProvider([
+        json.dumps({"decision": "chat", "reply": "Bhopal Jaipur Express leaves at 10 PM."}),
+        json.dumps({"decision": "chat", "reply": "More unverified claims."}),
+    ])
+    planner = UniversalTaskPlanner(provider=provider, tool_registry=registry)
+
+    result = __import__("asyncio").run(
+        planner.interpret(
+            "Plan a 3-day trip from Bhopal to Jaipur, with an overnight train.",
+            current_date=date(2026, 11, 17),
+        )
+    )
+
+    assert result["decision"] == "clarification"
+    assert "Which exact travel dates" in result["reply"]
+    assert result["structured_data"]["type"] == "reliability_checkpoint"
+    assert result["structured_data"]["execution_claims_allowed"] is False
+    assert result["structured_data"]["missing_information"] == ["exact travel dates"]
+    assert "December 2026" in result["reply"]
+    assert len(provider.calls) == 2
+
+
+def test_action_request_can_be_replanned_into_a_registered_workflow():
+    provider = FakeProvider([
+        json.dumps({"decision": "chat", "reply": "Here are your tasks."}),
+        json.dumps({
+            "decision": "workflow",
+            "plan": {
+                "goal_title": "List my open tasks",
+                "goal_description": "Retrieve active tasks",
+                "context": {},
+                "steps": [{
+                    "id": "tasks",
+                    "description": "List open tasks",
+                    "tool": "list_tasks",
+                    "params": {"include_completed": False},
+                }],
+            },
+        }),
+    ])
+    planner = UniversalTaskPlanner(provider=provider, tool_registry=registry)
+
+    result = __import__("asyncio").run(
+        planner.interpret("Find my open tasks.")
+    )
+
+    assert result["decision"] == "workflow"
+    assert result["plan"].steps[0].tool == "list_tasks"
+    assert len(provider.calls) == 2
