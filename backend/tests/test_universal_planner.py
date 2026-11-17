@@ -1,5 +1,6 @@
 """Tests for capability-driven planning and safe workflow validation."""
 import json
+from datetime import date
 
 from app.agents.universal_planner import UniversalTaskPlanner
 from app.tools.registry import registry
@@ -326,3 +327,26 @@ def test_orchestrator_passes_explicit_profile_defaults_as_advisory_context(db_se
     assert "local_datetime" in captured["context"]
     assert "25000" in captured["context"]
     assert "latest request overrides" in captured["context"]
+
+
+
+def test_interpret_uses_the_callers_local_calendar_date():
+    provider = FakeProvider(json.dumps({
+        "decision": "chat",
+        "reply": "I can help with your plan.",
+    }))
+    planner = UniversalTaskPlanner(provider=provider, tool_registry=registry)
+
+    result = __import__("asyncio").run(
+        planner.interpret(
+            "What should I prepare for tomorrow?",
+            current_date=date(2026, 12, 11),
+        )
+    )
+
+    assert result == {
+        "decision": "chat",
+        "reply": "I can help with your plan.",
+        "plan": None,
+    }
+    assert "CURRENT DATE: 2026-12-11" in provider.calls[0][0]
