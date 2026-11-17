@@ -133,7 +133,7 @@ def test_orchestrator_uses_universal_planner_for_unmatched_request(db_session, m
         )],
     )
 
-    async def fake_interpret(self, user_message, conversation_context=""):
+    async def fake_interpret(self, user_message, conversation_context="", current_date=None):
         return {"decision": "workflow", "reply": None, "plan": plan}
 
     monkeypatch.setattr(orchestrator.UniversalTaskPlanner, "interpret", fake_interpret)
@@ -307,7 +307,7 @@ def test_orchestrator_passes_explicit_profile_defaults_as_advisory_context(db_se
 
     captured = {}
 
-    async def fake_interpret(self, user_message, conversation_context=""):
+    async def fake_interpret(self, user_message, conversation_context="", current_date=None):
         captured["context"] = conversation_context
         return {"decision": "chat", "reply": "I can help with that."}
 
