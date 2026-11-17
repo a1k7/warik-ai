@@ -127,3 +127,53 @@ Phase	Scope	Status
 10	Local deployment and documentation	
 
 
+
+
+---
+
+## Browser Agent demo (Instinct-style vertical slice)
+
+This feature branch adds an authenticated browser-operating assistant at `/agent`. It launches real local Chromium against a controlled flight-search website, streams action summaries and screenshots, and pauses for human approval before a mock flight-hold action.
+
+### Run locally
+
+Backend (Terminal 1):
+
+```bash
+cd backend
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+playwright install chromium
+cp ../.env.example .env
+# Keep AGENT_DEMO_MODE=true and the localhost-only AGENT_ALLOWED_DOMAINS defaults.
+uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
+```
+
+Frontend (Terminal 2):
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+Open `http://localhost:5173`, create an account through the existing Warik login screen, then open `/agent`. Run the prefilled task or enter another route in the same `from X to Y` format. Watch browser steps and snapshots stream in. Choose **Approve action** or **Deny** at the approval card. Task history is at `/dashboard`; open a record to inspect its replay timeline and memory files at `/tasks/{id}`.
+
+### What the demo does
+
+- Playwright launches Chromium locally, or connects to `AGENT_BROWSER_CDP_URL` when configured.
+- The browser visits the local `/api/browser-agent/demo-site`, fills the search form, reads three sample options, and picks the lowest sample fare.
+- Task, step, approval, and outcome state is persisted in the existing SQLite/SQLAlchemy database.
+- Server-sent events stream task updates, action summaries, and screenshot references to the frontend.
+- Screenshots are stored under `backend/data/browser-agent/shots` and served only to the authenticated task owner.
+- Up to three keyword-matched markdown memory files are selected from `backend/memory` and shown on the task record.
+- Approval is checked against task ownership. A pending approval expires after 10 minutes and defaults to DENY.
+
+### Demo boundary
+
+Flight names, fares, and holds are fictional local fixtures. No airline, marketplace, reservation service, or payment provider is contacted. A completed hold is a local UI confirmation, not a reservation. Initial navigation is restricted to the localhost allowlist. This is a vertical-slice demo, not a production general-purpose browser agent.
+
+Set `AGENT_DEMO_MODE=false` to try the configured Warik Ollama/Groq planner. Without a reachable provider, keep `AGENT_DEMO_MODE=true`; the deterministic planner still operates the browser using the same task and approval ledger. Configure `AGENT_BROWSER_CDP_URL` only for a trusted CDP endpoint.
+
+The Scheduler and proactive triggers remain future work.

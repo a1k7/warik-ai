@@ -63,13 +63,13 @@ audio_cache/
 /token.json
 backend/token.json
 
-
 # Local archives and temporary backups
 *.zip
 *.bak
 *.backup*
 /backend/backup_*/
 /frontend-backup*/
+/backend/data/browser-agent/shots/
 
 # Personal documents - never commit
 /backend/Akhilesh — VIT - VTOP REGISTRATION.pdf

@@ -17,24 +17,27 @@ from app.api.travel import router as travel_router
 from app.api.voice import router as voice_router
 from app.api.conversations import router as conversations_router
 from app.api.bookings import router as bookings_router
-from app.api.workflows import router as workflows_router  # NEW
+from app.api.workflows import router as workflows_router
+from app.api.browser_agent import router as browser_agent_router
 from app.core.config import settings
 from app.database.base import Base
 from app.database.session import engine
 from app.api.documents import router as documents_router
 from app.api.integrations import router as integrations_router
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     Base.metadata.create_all(bind=engine)
     yield
 
+
 app = FastAPI(
     title=settings.app_name,
-    version="0.7.0",
+    version="0.8.0",
     description="Warik AI — your AI companion for everyday life.",
     lifespan=lifespan,
 )
-
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origin_list,
@@ -57,13 +60,17 @@ app.include_router(memory_router, prefix="/api")
 app.include_router(food_router, prefix="/api")
 app.include_router(conversations_router, prefix="/api")
 app.include_router(bookings_router, prefix="/api")
-app.include_router(workflows_router, prefix="/api")  # NEW
+app.include_router(workflows_router, prefix="/api")
 app.include_router(documents_router, prefix="/api")
 app.include_router(integrations_router, prefix="/api")
+app.include_router(browser_agent_router, prefix="/api")
+
+
 @app.get("/", tags=["root"])
 def root() -> dict[str, str]:
     return {
         "message": "Warik AI backend is running",
         "docs": "/docs",
         "health": "/api/health",
+        "browser_agent": "/api/browser-agent/demo-site",
     }

@@ -16,6 +16,7 @@ import { Reminders } from './pages/Reminders';
 import { Expenses } from './pages/Expenses';
 import { Travel } from './pages/Travel';
 import { Food } from './pages/Food';
+import { BrowserAgent, AgentDashboard, AgentTaskDetail } from './pages/BrowserAgent';
 
 import { AppShell } from './components/AppShell';
 import { login, register } from './api';
@@ -32,20 +33,12 @@ function LoginScreen({ onLogin }: { onLogin: () => void }) {
     e.preventDefault();
     setBusy(true);
     setError('');
-
     try {
-      if (mode === 'register') {
-        await register(email, name, password);
-      } else {
-        await login(email, password);
-      }
-
+      if (mode === 'register') await register(email, name, password);
+      else await login(email, password);
       onLogin();
     } catch (err: any) {
-      setError(
-        err?.response?.data?.detail ||
-        'Unable to authenticate. Check your details and backend connection.'
-      );
+      setError(err?.response?.data?.detail || 'Unable to authenticate. Check your details and backend connection.');
     } finally {
       setBusy(false);
     }
@@ -56,69 +49,16 @@ function LoginScreen({ onLogin }: { onLogin: () => void }) {
       <div className="login-card">
         <div className="login-mark">✦</div>
         <h1 className="login-brand">warik<span>.ai</span></h1>
-        <p className="login-subtitle">
-          Your personal execution assistant.
-        </p>
-
+        <p className="login-subtitle">Your personal execution assistant.</p>
         <form onSubmit={submit} className="login-form">
-          {mode === 'register' && (
-            <label>
-              Name
-              <input
-                required
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                autoComplete="name"
-              />
-            </label>
-          )}
-
-          <label>
-            Email
-            <input
-              required
-              type="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              autoComplete="email"
-            />
-          </label>
-
-          <label>
-            Password
-            <input
-              required
-              type="password"
-              minLength={8}
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              autoComplete={
-                mode === 'register' ? 'new-password' : 'current-password'
-              }
-            />
-          </label>
-
+          {mode === 'register' && <label>Name<input required value={name} onChange={(e) => setName(e.target.value)} autoComplete="name"/></label>}
+          <label>Email<input required type="email" value={email} onChange={(e) => setEmail(e.target.value)} autoComplete="email"/></label>
+          <label>Password<input required type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete={mode === 'register' ? 'new-password' : 'current-password'}/></label>
           {error && <p className="inline-error">{error}</p>}
-
-          <button className="login-button" disabled={busy}>
-            {busy
-              ? 'Please wait…'
-              : mode === 'register'
-                ? 'Create account'
-                : 'Sign in'}
-          </button>
+          <button className="login-button" disabled={busy}>{busy ? 'Please wait…' : mode === 'register' ? 'Create account' : 'Sign in'}</button>
         </form>
-
-        <button
-          className="auth-switch"
-          onClick={() => {
-            setMode(mode === 'login' ? 'register' : 'login');
-            setError('');
-          }}
-        >
-          {mode === 'login'
-            ? "Don't have an account? Create one"
-            : 'Already registered? Sign in'}
+        <button className="auth-switch" onClick={() => { setMode(mode === 'login' ? 'register' : 'login'); setError(''); }}>
+          {mode === 'login' ? "Don't have an account? Create one" : 'Already registered? Sign in'}
         </button>
       </div>
     </div>
@@ -126,30 +66,27 @@ function LoginScreen({ onLogin }: { onLogin: () => void }) {
 }
 
 function App() {
-  const [loggedIn, setLoggedIn] = useState(
-    !!localStorage.getItem('warik_token')
-  );
-
+  const [loggedIn, setLoggedIn] = useState(!!localStorage.getItem('warik_token'));
   return (
     <BrowserRouter>
-      {!loggedIn ? (
-        <LoginScreen onLogin={() => setLoggedIn(true)} />
-      ) : (
+      {!loggedIn ? <LoginScreen onLogin={() => setLoggedIn(true)}/> : (
         <Routes>
-          <Route element={<AppShell />}>
-            <Route index element={<Home />} />
-            <Route path="/chat" element={<Chat />} />
-            <Route path="/vision" element={<Vision />} />
-            <Route path="/tasks" element={<Tasks />} />
-            <Route path="/reminders" element={<Reminders />} />
-            <Route path="/expenses" element={<Expenses />} />
-            <Route path="/travel" element={<Travel />} />
-            <Route path="/food" element={<Food />} />
-            <Route path="/saved" element={<Saved />} />
-            <Route path="/settings" element={<Settings />} />
+          <Route element={<AppShell/>}>
+            <Route index element={<Home/>}/>
+            <Route path="/chat" element={<Chat/>}/>
+            <Route path="/vision" element={<Vision/>}/>
+            <Route path="/tasks" element={<Tasks/>}/>
+            <Route path="/reminders" element={<Reminders/>}/>
+            <Route path="/expenses" element={<Expenses/>}/>
+            <Route path="/travel" element={<Travel/>}/>
+            <Route path="/food" element={<Food/>}/>
+            <Route path="/saved" element={<Saved/>}/>
+            <Route path="/settings" element={<Settings/>}/>
           </Route>
-
-          <Route path="*" element={<Navigate to="/" replace />} />
+          <Route path="/agent" element={<BrowserAgent/>}/>
+          <Route path="/dashboard" element={<AgentDashboard/>}/>
+          <Route path="/tasks/:id" element={<AgentTaskDetail/>}/>
+          <Route path="*" element={<Navigate to="/" replace/>}/>
         </Routes>
       )}
     </BrowserRouter>
