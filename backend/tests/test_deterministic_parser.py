@@ -65,3 +65,15 @@ def test_parse_summary_week():
 
 def test_parse_unknown_returns_none():
     assert deterministic_parser.parse("Hello there, how are you?") is None
+
+
+def test_parse_food_discovery_supports_unlisted_city_budget_and_diet():
+    result = deterministic_parser.parse(
+        "Find vegetarian restaurants in Indore under ₹500",
+        ref=datetime(2026, 1, 15, 12, 0),
+    )
+    assert result is not None
+    assert result["intent"] == "discover_food"
+    assert result["params"]["location"] == "Indore"
+    assert result["params"]["budget"] == 500
+    assert result["params"]["dietary_requirements"] == ["vegetarian"]

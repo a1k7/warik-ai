@@ -132,7 +132,8 @@ export interface StructuredData {
     | 'flight_list'
     | 'food_list'
     | 'cab_handoff'
-    | 'advanced_itinerary';
+    | 'advanced_itinerary'
+    | 'commitment_proposal';
   items?: (HotelItem | FlightItem | FoodItem)[];
   search_url?: string;
   live_inventory?: boolean;
@@ -150,6 +151,15 @@ export interface StructuredData {
   days?: ItineraryDay[];
   budget?: TripBudget;
   notes?: string[];
+  commitment_proposal?: {
+    title: string;
+    details?: string;
+    source?: string;
+    saved?: boolean;
+    counterparty?: string | null;
+    due_at?: string | null;
+    timezone?: string | null;
+  };
 }
 
 export interface AgentResponse {

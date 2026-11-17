@@ -3,6 +3,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 import app.models  # noqa: F401
+from app.api.commitments import router as commitments_router
 from app.api.agent import router as agent_router
 from app.api.auth import router as auth_router
 from app.api.expenses import router as expenses_router
@@ -44,6 +45,7 @@ app.add_middleware(
 )
 
 app.include_router(health_router, prefix="/api")
+app.include_router(commitments_router, prefix="/api")
 app.include_router(auth_router, prefix="/api")
 app.include_router(agent_router, prefix="/api")
 app.include_router(voice_router, prefix="/api")

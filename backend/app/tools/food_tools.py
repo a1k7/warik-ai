@@ -113,6 +113,8 @@ class DiscoverFoodInput(BaseModel):
     query: str = Field(default="restaurant")
     category: str = Field(default="restaurant")
     budget: Optional[float] = Field(default=None)
+    # Carried as user intent for transparency; OSM discovery does not verify dietary suitability.
+    dietary_requirements: list[str] = Field(default_factory=list)
 
 
 class DiscoverFoodTool(BaseTool):
@@ -222,6 +224,7 @@ class DiscoverFoodTool(BaseTool):
                         "location": city_name,
                         "query": params.query,
                         "budget": params.budget,
+                        "requested_dietary_requirements": params.dietary_requirements,
                         "source": "OpenStreetMap",
                         "menu_prices_verified": False,
                         "dietary_suitability_verified": False,
@@ -241,6 +244,7 @@ class DiscoverFoodTool(BaseTool):
                     "location": city_name,
                     "query": params.query,
                     "budget": params.budget,
+                    "requested_dietary_requirements": params.dietary_requirements,
                     "source": "OpenStreetMap",
                     "menu_prices_verified": False,
                     "dietary_suitability_verified": False,

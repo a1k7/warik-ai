@@ -36,7 +36,46 @@ export interface CurrentUser {
 
 export const fetchCurrentUser = async (): Promise<CurrentUser> =>
   (await api.get<CurrentUser>('/auth/me')).data;
+
+export interface CapabilityStatusItem {
+  id: string;
+  label: string;
+  status: string;
+  detail: string;
+}
+export interface CapabilityStatusResponse {
+  services: CapabilityStatusItem[];
+  note: string;
+}
+export const capabilitiesApi = {
+  status: async () =>
+    (await api.get<CapabilityStatusResponse>('/health/capabilities')).data,
+};
 export const saveFavoriteRestaurant = async (name: string, location: string) => (await api.post('/food/favorites', { name, location })).data;
+
+
+export interface VoiceTranscriptionResponse {
+  transcript: string;
+  request_id?: string | null;
+  language_code: string;
+  usage_seconds_used: number;
+  usage_seconds_limit: number;
+}
+
+export const voiceApi = {
+  transcribe: async (audio: Blob, languageCode: string, durationSeconds: number) => {
+    const form = new FormData();
+    const mimeType = audio.type || 'audio/webm';
+    const extension = mimeType.includes('mp4') ? 'm4a' : mimeType.includes('ogg') ? 'ogg' : 'webm';
+    form.append('audio', audio, `warik-voice.${extension}`);
+    form.append('language_code', languageCode);
+    form.append('duration_seconds', String(durationSeconds));
+    const response = await api.post<VoiceTranscriptionResponse>('/voice/transcribe', form, {
+      timeout: 120000,
+    });
+    return response.data;
+  },
+};
 
 export const fetchConversations = async () => (await api.get('/conversations')).data;
 export const createConversation = async () => (await api.post('/conversations', { title: 'New Chat' })).data;
@@ -183,3 +222,19 @@ export const declineAgentAction = async (confirmationToken: string): Promise<{ s
   (await api.post<{ status: string; message: string }>('/agent/decline', {
     confirmation_token: confirmationToken,
   })).data;
+
+export type CommitmentStatus = 'open' | 'in_progress' | 'waiting' | 'blocked' | 'completed';
+export interface CommitmentItem {
+  id:number; title:string; details?:string|null; counterparty?:string|null;
+  due_at?:string|null; status:CommitmentStatus; source:string;
+  verification_note?:string|null; verified_at?:string|null;
+  created_at:string; updated_at:string;
+}
+export const commitmentsApi = {
+  list: async () => (await api.get<CommitmentItem[]>('/commitments/')).data,
+  create: async (payload: {title:string; details?:string; counterparty?:string; due_at?:string; source?:string}) =>
+    (await api.post<CommitmentItem>('/commitments/', payload)).data,
+  update: async (id:number, payload: {status?:CommitmentStatus; verification_note?:string}) =>
+    (await api.patch<CommitmentItem>(`/commitments/${id}`, payload)).data,
+  remove: async (id:number) => { await api.delete(`/commitments/${id}`); },
+};

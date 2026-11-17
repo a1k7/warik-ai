@@ -1,5 +1,6 @@
 """Tests for capability-driven planning and safe workflow validation."""
 import json
+from datetime import date
 
 from app.agents.universal_planner import UniversalTaskPlanner
 from app.tools.registry import registry
@@ -12,6 +13,8 @@ class FakeProvider:
 
     async def _call(self, system, user, force_json=False):
         self.calls.append((system, user, force_json))
+        if isinstance(self.response, list):
+            return self.response.pop(0)
         return self.response
 
 
@@ -132,7 +135,7 @@ def test_orchestrator_uses_universal_planner_for_unmatched_request(db_session, m
         )],
     )
 
-    async def fake_interpret(self, user_message, conversation_context=""):
+    async def fake_interpret(self, user_message, conversation_context="", current_date=None):
         return {"decision": "workflow", "reply": None, "plan": plan}
 
     monkeypatch.setattr(orchestrator.UniversalTaskPlanner, "interpret", fake_interpret)
@@ -278,3 +281,259 @@ def test_optional_step_with_invalid_supplied_value_is_rejected():
     )
 
     assert result["decision"] == "clarification"
+
+
+
+def test_orchestrator_passes_explicit_profile_defaults_as_advisory_context(db_session, monkeypatch):
+    import asyncio
+    from app.agents import orchestrator
+    from app.models import User, UserPreference
+    from app.core.security import hash_password
+
+    user = User(
+        email="profile-context@example.com",
+        name="Profile Context Test",
+        password_hash=hash_password("password123"),
+    )
+    db_session.add(user)
+    db_session.commit()
+    db_session.refresh(user)
+    db_session.add(UserPreference(
+        user_id=user.id,
+        preferred_language="hi-IN",
+        default_currency="INR",
+        timezone="Asia/Kolkata",
+        monthly_budget=25000,
+    ))
+    db_session.commit()
+
+    captured = {}
+
+    async def fake_interpret(self, user_message, conversation_context="", current_date=None):
+        captured["context"] = conversation_context
+        return {"decision": "chat", "reply": "I can help with that."}
+
+    monkeypatch.setattr(orchestrator.UniversalTaskPlanner, "interpret", fake_interpret)
+    monkeypatch.setattr(orchestrator, "parse_deterministic", lambda _text: None)
+    monkeypatch.setattr(orchestrator, "get_provider", lambda: object())
+
+    response = asyncio.run(
+        orchestrator.handle_message(db_session, user, "Help me plan my monthly spending")
+    )
+
+    assert response.reply == "I can help with that."
+    assert "USER PROFILE DEFAULTS" in captured["context"]
+    assert "hi-IN" in captured["context"]
+    assert "INR" in captured["context"]
+    assert "Asia/Kolkata" in captured["context"]
+    assert "local_datetime" in captured["context"]
+    assert "25000" in captured["context"]
+    assert "latest request overrides" in captured["context"]
+
+
+
+def test_interpret_uses_the_callers_local_calendar_date():
+    provider = FakeProvider(json.dumps({
+        "decision": "chat",
+        "reply": "I can help with your plan.",
+    }))
+    planner = UniversalTaskPlanner(provider=provider, tool_registry=registry)
+
+    result = __import__("asyncio").run(
+        planner.interpret(
+            "What should I prepare for tomorrow?",
+            current_date=date(2026, 12, 11),
+        )
+    )
+
+    assert result == {
+        "decision": "chat",
+        "reply": "I can help with your plan.",
+        "plan": None,
+    }
+    assert "CURRENT DATE: 2026-12-11" in provider.calls[0][0]
+
+
+
+def test_prompt_manifest_removes_schema_noise_but_keeps_tool_contract():
+    planner = _planner()
+    manifest = planner._capability_manifest()
+    prompt_manifest = planner._prompt_manifest(manifest)
+    task = next(item for item in prompt_manifest if item["name"] == "create_task")
+
+    assert "properties" in task["input_schema"]
+    assert "title" in task["input_schema"]["properties"]
+    assert "title" in task["input_schema"].get("required", [])
+    assert "$schema" not in task["input_schema"]
+    full_task = next(item for item in manifest if item["name"] == "create_task")
+    assert task["is_mutating"] is bool(full_task["is_mutating"])
+    assert task["requires_confirmation"] is bool(full_task["requires_confirmation"])
+
+
+def test_interpret_repairs_invalid_json_once():
+    from asyncio import run
+
+    provider = FakeProvider([
+        "This is not valid JSON",
+        json.dumps({"decision": "chat", "reply": "Hello from the repaired response."}),
+    ])
+    planner = UniversalTaskPlanner(provider=provider, tool_registry=registry)
+
+    result = run(planner.interpret("Hello"))
+
+    assert result == {
+        "decision": "chat",
+        "reply": "Hello from the repaired response.",
+        "plan": None,
+    }
+    assert len(provider.calls) == 2
+    assert provider.calls[0][2] is True
+    assert provider.calls[1][2] is True
+    assert "OUTPUT REPAIR MODE" in provider.calls[1][0]
+    assert "Previous invalid model output" in provider.calls[1][1]
+
+
+def test_interpret_accepts_json_with_a_short_preamble_and_fence():
+    provider = FakeProvider(
+        'Here is the result:\n```json\n'
+        + json.dumps({"decision": "chat", "reply": "Ready."})
+        + '\n```'
+    )
+    planner = UniversalTaskPlanner(provider=provider, tool_registry=registry)
+
+    result = __import__("asyncio").run(planner.interpret("Hi"))
+
+    assert result == {"decision": "chat", "reply": "Ready.", "plan": None}
+    assert len(provider.calls) == 1
+
+
+
+def test_disabled_capability_is_never_executable():
+    planner = _planner()
+    manifest = planner._capability_manifest()
+    task = next(item for item in manifest if item["name"] == "list_tasks")
+    task["execution_status"] = "disabled"
+
+    result = planner._build_plan(
+        {
+            "steps": [{
+                "id": "tasks",
+                "tool": "list_tasks",
+                "params": {},
+            }]
+        },
+        manifest,
+    )
+
+    assert result["decision"] == "clarification"
+    assert "disabled" in result["reply"]
+
+
+
+def test_compact_schema_preserves_tool_defaults_and_property_names():
+    schema = {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "examples": [{"title": "example"}],
+        "properties": {
+            "title": {
+                "title": "Task title",
+                "type": "string",
+                "default": "Untitled",
+            }
+        },
+    }
+
+    compact = UniversalTaskPlanner._compact_schema(schema)
+
+    assert "$schema" not in compact
+    assert "examples" not in compact
+    assert compact["properties"]["title"]["title"] == "Task title"
+    assert compact["properties"]["title"]["default"] == "Untitled"
+
+
+
+def test_plain_explanation_does_not_require_registered_capability():
+    assert not UniversalTaskPlanner.requires_registered_capability(
+        "Explain how overnight trains work."
+    )
+
+
+def test_real_world_trip_planning_requires_registered_capability():
+    assert UniversalTaskPlanner.requires_registered_capability(
+        "Plan a 3-day trip from Bhopal to Jaipur with hotels and train travel."
+    )
+
+
+def test_action_request_that_model_routes_to_chat_is_replanned():
+    provider = FakeProvider([
+        json.dumps({"decision": "chat", "reply": "Here is a made-up train plan."}),
+        json.dumps({
+            "decision": "clarification",
+            "reply": "Which exact travel dates should I use?",
+        }),
+    ])
+    planner = UniversalTaskPlanner(provider=provider, tool_registry=registry)
+
+    result = __import__("asyncio").run(
+        planner.interpret(
+            "Plan a 3-day trip from Bhopal to Jaipur.",
+            current_date=date(2026, 11, 17),
+        )
+    )
+
+    assert result["decision"] == "clarification"
+    assert result["reply"] == "Which exact travel dates should I use?"
+    assert len(provider.calls) == 2
+    assert "MANDATORY EXECUTION BOUNDARY" in provider.calls[1][0]
+
+
+def test_action_request_fails_closed_when_model_keeps_returning_chat():
+    provider = FakeProvider([
+        json.dumps({"decision": "chat", "reply": "Bhopal Jaipur Express leaves at 10 PM."}),
+        json.dumps({"decision": "chat", "reply": "More unverified claims."}),
+    ])
+    planner = UniversalTaskPlanner(provider=provider, tool_registry=registry)
+
+    result = __import__("asyncio").run(
+        planner.interpret(
+            "Plan a 3-day trip from Bhopal to Jaipur, with an overnight train.",
+            current_date=date(2026, 11, 17),
+        )
+    )
+
+    assert result["decision"] == "clarification"
+    assert "which exact travel dates" in result["reply"].lower()
+    assert result["structured_data"]["type"] == "reliability_checkpoint"
+    assert result["structured_data"]["execution_claims_allowed"] is False
+    assert result["structured_data"]["missing_information"] == ["exact travel dates"]
+    assert "December 2026" in result["reply"]
+    assert len(provider.calls) == 2
+
+
+def test_action_request_can_be_replanned_into_a_registered_workflow():
+    provider = FakeProvider([
+        json.dumps({"decision": "chat", "reply": "Here are your tasks."}),
+        json.dumps({
+            "decision": "workflow",
+            "plan": {
+                "goal_title": "List my open tasks",
+                "goal_description": "Retrieve active tasks",
+                "context": {},
+                "steps": [{
+                    "id": "tasks",
+                    "description": "List open tasks",
+                    "tool": "list_tasks",
+                    "params": {"include_completed": False},
+                }],
+            },
+        }),
+    ])
+    planner = UniversalTaskPlanner(provider=provider, tool_registry=registry)
+
+    result = __import__("asyncio").run(
+        planner.interpret("Find my open tasks.")
+    )
+
+    assert result["decision"] == "workflow"
+    assert result["plan"].steps[0].tool == "list_tasks"
+    assert len(provider.calls) == 2

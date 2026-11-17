@@ -518,7 +518,7 @@ def _allocate_hotel_dates(
 
 class GenerateAdvancedItineraryTool(BaseTool):
     name = "generate_advanced_itinerary"
-    description = "Generate a detailed, verified day-by-day itinerary with real places, restaurants, and hotels."
+    description = ("Build a day-by-day itinerary using geospatial place listings. It does not verify venue opening hours, visitor access, intercity schedules, live hotel inventory, or prices; budget lines are estimates unless a provider result explicitly supplies a price.")
     input_schema = ItineraryInput
     requires_confirmation = False
 
@@ -725,7 +725,9 @@ class GenerateAdvancedItineraryTool(BaseTool):
                 budget=budget,
                 notes=[
                     "Place listings are sourced from Geoapify/OpenStreetMap; listings do not confirm visitor access or current operating status.",
-                    "Intercity road distances and journey times are not verified by this itinerary.",
+                    "Suggested activity times are itinerary planning suggestions, not verified venue opening hours.",
+                    "Intercity road-distance figures are estimates, not verified rail, bus, or flight schedules or fares.",
+                    "Budget lines marked ESTIMATE use planning assumptions, not live provider price quotes; categories marked UNAVAILABLE are excluded from the total.",
                     "Descriptions are conservative prompts to verify visitor details, not independently researched facts.",
                     *[
                         f"Hotel search issue: {failure}"
@@ -754,24 +756,42 @@ class GenerateAdvancedItineraryTool(BaseTool):
         items = []
         excludes = []
 
-        if len(cities) > 1:
+        route_points = []
+        if params.origin:
+            origin_city = _geocode_place(params.origin)
+            if origin_city and origin_city.get("lat") is not None and origin_city.get("lon") is not None:
+                route_points.append(origin_city)
+        route_points.extend(cities)
+
+        if len(route_points) > 1 and (
+            params.origin is None or route_points[0].get("name", "").lower()
+            != cities[0].get("name", "").lower()
+        ):
             total_km = sum(
-                haversine_km(cities[i]["lat"], cities[i]["lon"], cities[i+1]["lat"], cities[i+1]["lon"])
-                for i in range(len(cities) - 1)
+                haversine_km(
+                    route_points[index]["lat"],
+                    route_points[index]["lon"],
+                    route_points[index + 1]["lat"],
+                    route_points[index + 1]["lon"],
+                )
+                for index in range(len(route_points) - 1)
             )
             intercity = round(total_km * 1.5 * travellers)
             items.append(BudgetItem(
                 category="Intercity transport",
                 amount=intercity,
                 classification="ESTIMATE",
-                note=f"~{total_km:.0f} km total",
+                note=(
+                    f"~{total_km:.0f} km straight-line distance converted to a "
+                    "rough road-cost proxy; not a train, bus, or flight quote."
+                ),
             ))
         else:
             items.append(BudgetItem(
                 category="Intercity transport",
                 amount=None,
                 classification="UNAVAILABLE",
-                note="Add origin city to enable.",
+                note="An origin city could not be resolved; no intercity cost is included.",
             ))
             excludes.append("Intercity transport")
 

@@ -13,7 +13,9 @@ import {
 } from 'lucide-react';
 import {
   swiggyIntegrationApi,
+  capabilitiesApi,
   type SwiggyConnectionStatus,
+  type CapabilityStatusResponse,
 } from '../api';
 
 const palettes = [
@@ -43,6 +45,10 @@ export const Settings = () => {
   const [swiggyMessage, setSwiggyMessage] = useState('');
   const [swiggyMessageType, setSwiggyMessageType] =
     useState<'success' | 'error' | ''>('');
+  const [capabilityStatus, setCapabilityStatus] =
+    useState<CapabilityStatusResponse | null>(null);
+  const [capabilityLoading, setCapabilityLoading] = useState(true);
+  const [capabilityError, setCapabilityError] = useState('');
 
   useEffect(() => {
     document.documentElement.dataset.theme = dark ? 'dark' : 'light';
@@ -53,6 +59,22 @@ export const Settings = () => {
     localStorage.setItem('warik_accent', accent);
     localStorage.setItem('warik_font_size', fontSize);
   }, [dark, accent, fontSize]);
+
+  const loadCapabilityStatus = async () => {
+    setCapabilityLoading(true);
+    setCapabilityError('');
+    try {
+      setCapabilityStatus(await capabilitiesApi.status());
+    } catch (error: unknown) {
+      const message =
+        (error as { response?: { data?: { detail?: string } } })
+          ?.response?.data?.detail ||
+        'Could not read provider configuration status.';
+      setCapabilityError(typeof message === 'string' ? message : 'Could not read provider configuration status.');
+    } finally {
+      setCapabilityLoading(false);
+    }
+  };
 
   const loadSwiggyStatus = async () => {
     setSwiggyLoading(true);
@@ -84,6 +106,7 @@ export const Settings = () => {
     }
 
     void loadSwiggyStatus();
+    void loadCapabilityStatus();
   }, []);
 
   const connectSwiggy = async () => {
@@ -140,6 +163,26 @@ export const Settings = () => {
   };
 
   const connected = swiggyStatus?.connected === true;
+  const capabilityLabel = (status: string) => {
+    const labels: Record<string, string> = {
+      configured: 'Configured',
+      local_configured: 'Local model',
+      legacy_provider: 'CLI provider',
+      external_search_only: 'Search link only',
+      handoff_only: 'Handoff only',
+      missing_credentials: 'Needs credentials',
+      disabled: 'Disabled',
+      mock: 'Mock mode',
+      account_connection: 'Account connection',
+      best_effort: 'Best effort',
+    };
+    return labels[status] || status.replace(/_/g, ' ');
+  };
+  const capabilityTone = (status: string) => {
+    if (status === 'configured' || status === 'local_configured') return 'connected';
+    if (status === 'missing_credentials' || status === 'disabled' || status === 'mock') return 'needs-setup';
+    return '';
+  };
 
   return (
     <main className="settings-page">
@@ -305,6 +348,49 @@ export const Settings = () => {
           Warik never asks for your Swiggy password or OTP. Authorization
           takes place through Swiggy.
         </p>
+      </section>
+
+
+      <section className="settings-card">
+        <div className="settings-card-title">
+          <span className="settings-icon"><ShieldCheck size={19} /></span>
+          <div>
+            <h2>Warik capability readiness</h2>
+            <p>What this deployment is currently configured to do.</p>
+          </div>
+          <button
+            className="integration-refresh"
+            onClick={() => void loadCapabilityStatus()}
+            disabled={capabilityLoading}
+            aria-label="Refresh capability readiness"
+          >
+            <RefreshCw size={15} />
+          </button>
+        </div>
+
+        {capabilityLoading ? (
+          <p className="integration-description">Checking server configuration…</p>
+        ) : capabilityError ? (
+          <p className="integration-message error" role="alert">{capabilityError}</p>
+        ) : (
+          <div className="capability-list">
+            {(capabilityStatus?.services || []).map(service => (
+              <article className="capability-row" key={service.id}>
+                <div className="integration-provider-heading">
+                  <strong>{service.label}</strong>
+                  <span className={`integration-badge ${capabilityTone(service.status)}`}>
+                    {capabilityLabel(service.status)}
+                  </span>
+                </div>
+                <p className="integration-description">{service.detail}</p>
+              </article>
+            ))}
+          </div>
+        )}
+
+        {capabilityStatus?.note && (
+          <p className="integration-footnote">{capabilityStatus.note}</p>
+        )}
       </section>
 
       <section className="settings-card">

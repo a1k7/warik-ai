@@ -4,6 +4,8 @@ import {
   Car,
   MapPin,
   ExternalLink,
+  Check,
+  RefreshCw,
   AlertTriangle,
   ArrowRight,
   Map,
@@ -11,6 +13,7 @@ import {
   CalendarDays,
   Sparkles,
   Image as ImageIcon,
+  ShieldCheck,
 } from 'lucide-react';
 import { useState } from 'react';
 
@@ -22,6 +25,8 @@ interface TripData {
   cabs: any;
   itinerary: any;
   failures: any[];
+  flight_searches?: any[];
+  flight_groups?: any[];
 }
 
 function HotelImage({ src, name }: { src?: string; name: string }) {
@@ -164,11 +169,26 @@ function ActivityGroup({
   );
 }
 
-export const TripResultCard = ({ data }: { data: TripData }) => {
+export const TripResultCard = ({
+  data,
+  onSelectHotel,
+  onSelectFlight,
+  onRefreshFlight,
+}: {
+  data: TripData;
+  onSelectHotel?: (hotel: any, context: any) => void;
+  onSelectFlight?: (flight: any) => void;
+  onRefreshFlight?: (offerId: string) => void;
+}) => {
   if (!data) return null;
 
   const hotels = data.hotels || [];
   const days = data.itinerary?.days || [];
+  const budget = data.itinerary?.budget;
+  const flightSearches = data.flight_searches ?? [];
+  const flightGroups = data.flight_groups?.length
+    ? data.flight_groups
+    : (data.flights?.length ? [{ items: data.flights }] : []);
 
   const displayTitle =
     !data.destination || data.destination === 'Your Trip'
@@ -301,12 +321,84 @@ export const TripResultCard = ({ data }: { data: TripData }) => {
         </section>
       )}
 
+      {/* EVIDENCE-AWARE BUDGET */}
+      {budget && (
+        <section className="rounded-[22px] border border-[#702D3C]/40 bg-[#30252A] p-5 sm:p-6">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <div className="flex items-center gap-2 text-[#D6A8B3] text-[10px] uppercase tracking-[0.2em] font-bold">
+                <ShieldCheck size={14} /> Budget reality check
+              </div>
+              <h3 className="text-xl font-semibold mt-1">What this trip may cost</h3>
+              <p className="text-xs text-[#BCA7AF] mt-1">
+                Estimates and provider prices are kept separate.
+              </p>
+            </div>
+            <span className="rounded-full border border-amber-400/25 bg-amber-400/10 px-3 py-1.5 text-[10px] font-bold uppercase tracking-wide text-amber-200">
+              {budget.is_partial ? 'Partial estimate' : 'Planning estimate'}
+            </span>
+          </div>
+
+          <div className="mt-4 grid gap-2">
+            {(budget.items || []).map((item: any, index: number) => (
+              <div key={`${item.category}-${index}`} className="flex items-center justify-between gap-3 rounded-xl bg-[#1A1417] border border-white/[0.06] px-3 py-3">
+                <div className="min-w-0">
+                  <p className="text-sm font-medium text-[#FAF7F3]">{item.category}</p>
+                  {item.note && <p className="text-[10px] text-[#BCA7AF] mt-1">{item.note}</p>}
+                  <p className="text-[9px] uppercase tracking-wider mt-1 text-[#C99AA4]">
+                    {item.classification === 'ESTIMATE'
+                      ? 'Modelled estimate'
+                      : item.classification === 'UNAVAILABLE'
+                        ? 'Not verified / excluded'
+                        : item.classification || 'Unclassified'}
+                  </p>
+                </div>
+                <p className="shrink-0 text-sm font-semibold text-[#F1DDE2] tabular-nums">
+                  {typeof item.amount === 'number'
+                    ? new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 }).format(item.amount)
+                    : 'Not included'}
+                </p>
+              </div>
+            ))}
+          </div>
+
+          <div className="mt-4 rounded-xl border border-white/10 bg-black/10 p-4">
+            <div className="flex items-end justify-between gap-3">
+              <div>
+                <p className="text-[10px] uppercase tracking-wider text-[#BCA7AF]">Estimated total</p>
+                <p className="text-2xl font-semibold text-white mt-1 tabular-nums">
+                  {typeof budget.total_estimate === 'number'
+                    ? new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 }).format(budget.total_estimate)
+                    : 'Unavailable'}
+                </p>
+              </div>
+              {typeof budget.remaining === 'number' && (
+                <div className="text-right">
+                  <p className="text-[10px] uppercase tracking-wider text-[#BCA7AF]">Remaining vs budget</p>
+                  <p className={`text-lg font-semibold mt-1 tabular-nums ${budget.remaining >= 0 ? 'text-emerald-300' : 'text-amber-300'}`}>
+                    {new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 }).format(budget.remaining)}
+                  </p>
+                </div>
+              )}
+            </div>
+            {Array.isArray(budget.excludes) && budget.excludes.length > 0 && (
+              <p className="text-[10px] text-amber-200/90 mt-3">
+                Excluded from total: {budget.excludes.join(', ')}.
+              </p>
+            )}
+          </div>
+          <p className="text-[10px] leading-relaxed text-[#BCA7AF] mt-3">
+            Estimates use planning assumptions, not live price quotes. Confirm transport fares, accommodation totals and attraction fees with providers before relying on this budget.
+          </p>
+        </section>
+      )}
+
       {/* HOTELS */}
       {hotels.length > 0 && (
         <section className="rounded-[22px] border border-[#702D3C]/40 bg-[#30252A] p-5 sm:p-6 shadow-lg">
           <div className="mb-5">
             <div className="flex items-center gap-2 text-[#D6A8B3] text-[10px] uppercase tracking-[0.2em] font-bold">
-              <Building2 size={14} /> Handpicked stays
+              <Building2 size={14} /> Hotel options
             </div>
             <h3 className="text-xl font-semibold mt-1">Places to stay</h3>
             <p className="text-xs text-[#BCA7AF] mt-1">
@@ -380,6 +472,19 @@ export const TripResultCard = ({ data }: { data: TripData }) => {
                       View booking options <ExternalLink size={13} />
                     </a>
                   )}
+                  {onSelectHotel && (
+                    <button
+                      type="button"
+                      onClick={() => onSelectHotel(hotel, {
+                        city: hotel.city || data.destination,
+                        check_in: hotel.check_in,
+                        check_out: hotel.check_out,
+                      })}
+                      className="mt-2 flex items-center justify-center gap-2 w-full rounded-xl border border-[#C99AA4]/30 bg-white/[0.04] hover:bg-white/[0.08] py-3 text-xs font-semibold text-[#E7C2CA] transition-colors"
+                    >
+                      Use this stay in my trip <Check size={13} />
+                    </button>
+                  )}
                 </div>
               </article>
             ))}
@@ -387,58 +492,138 @@ export const TripResultCard = ({ data }: { data: TripData }) => {
         </section>
       )}
 
+
+      {/* Provider fallback: retain the route handoff when structured live offers are unavailable. */}
+      {(!data.flights || data.flights.length === 0) && flightSearches.length > 0 && (
+        <section className="rounded-[22px] border border-[#702D3C]/40 bg-[#30252A] p-5 sm:p-6">
+          <div className="flex items-center gap-2 text-[#D6A8B3] text-[10px] uppercase tracking-[0.2em] font-bold mb-2">
+            <Plane size={14} /> Flight search
+          </div>
+          <h3 className="text-lg font-semibold">Check current flight options</h3>
+          <p className="text-xs text-[#BCA7AF] mt-2">
+            {flightSearches[0].live_inventory === false
+              ? "Live flight offers were not available from the connected provider in this session. This link opens an external route search; it is not a verified fare quote."
+              : "The connected provider returned no matching flight offers. You can also check the route directly."}
+          </p>
+          {flightSearches[0].search_url && (
+            <a
+              href={flightSearches[0].search_url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="mt-4 inline-flex items-center gap-2 rounded-xl bg-[#702D3C] hover:bg-[#873D50] px-4 py-3 text-xs font-semibold text-white"
+            >
+              Open external flight search <ExternalLink size={13} />
+            </a>
+          )}
+        </section>
+      )}
+
       {/* FLIGHTS */}
-      {data.flights?.length > 0 && (
+      {flightGroups.length > 0 && (
         <section className="rounded-[22px] border border-[#702D3C]/40 bg-[#30252A] p-5 sm:p-6 shadow-lg">
           <div className="flex items-center gap-2 text-[#D6A8B3] text-[10px] uppercase tracking-[0.2em] font-bold mb-1">
             <Plane size={14} /> Flight options
           </div>
-          <h3 className="text-xl font-semibold mb-4">Getting there</h3>
+          <h3 className="text-xl font-semibold mb-4">
+            {flightGroups.length > 1 ? 'Your flight legs' : 'Getting there'}
+          </h3>
 
-          <div className="grid gap-3">
-            {data.flights.map((flight: any, index: number) => (
-              <article
-                key={index}
-                className="rounded-xl bg-[#1A1417] border border-white/[0.07] p-4"
-              >
-                <div className="flex items-center justify-between gap-3 mb-3">
-                  <p className="text-lg font-semibold">{flight.price}</p>
-                  <span className="text-xs text-[#D6A8B3]">
-                    {flight.stops === 0 ? 'Non-stop' : `${flight.stops ?? '—'} stop(s)`}
-                  </span>
-                </div>
-
-                {flight.segments?.map((segment: any, j: number) => (
-                  <div key={j} className="border-t border-white/[0.07] pt-3 mt-2">
-                    <div className="flex justify-between text-sm gap-2">
-                      <span className="font-medium">
-                        {segment.airline} {segment.flight_number}
-                      </span>
-                      <span className="text-[#C99AA4] text-xs">
-                        {segment.departure}
-                      </span>
+          <div className="grid gap-4">
+            {flightGroups.map((group: any, groupIndex: number) => {
+              const groupItems = Array.isArray(group.items) ? group.items : [];
+              const legLabel = flightGroups.length === 2
+                ? (groupIndex === 0 ? 'Outbound' : 'Return')
+                : (flightGroups.length > 1 ? `Leg ${groupIndex + 1}` : 'Flight options');
+              return (
+                <div key={group.step_id || groupIndex} className="rounded-2xl border border-white/[0.07] bg-[#21191D] p-4">
+                  <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
+                    <div>
+                      <p className="text-[10px] uppercase tracking-[0.18em] font-bold text-[#C99AA4]">{legLabel}</p>
+                      {(group.origin || group.destination) && (
+                        <p className="text-sm font-semibold mt-1">
+                          {group.origin || '—'} <ArrowRight size={13} className="inline mx-1 text-[#C99AA4]"/> {group.destination || '—'}
+                        </p>
+                      )}
+                      {group.date && (
+                        <p className="text-[11px] text-[#BCA7AF] mt-1">{group.date}</p>
+                      )}
+                      {Number(group.filters_applied?.passengers) > 0 && (
+                        <p className="text-[10px] text-[#BCA7AF]/80 mt-1">
+                          Prices for {Number(group.filters_applied.passengers)} adult{Number(group.filters_applied.passengers) === 1 ? '' : 's'}
+                        </p>
+                      )}
                     </div>
-                    <div className="flex items-center gap-2 text-xs text-[#BCA7AF] mt-2">
-                      <span>{segment.origin}</span>
-                      <ArrowRight size={12} />
-                      <span>{segment.destination}</span>
-                      <span className="ml-auto">{segment.arrival}</span>
-                    </div>
+                    {group.source && <span className="text-[10px] text-[#BCA7AF]">{group.source}</span>}
                   </div>
-                ))}
 
-                {flight.url && (
-                  <a
-                    href={flight.url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="mt-4 flex justify-center items-center gap-2 rounded-xl bg-[#702D3C] hover:bg-[#873D50] py-2.5 text-xs font-semibold"
-                  >
-                    View flight <ExternalLink size={12} />
-                  </a>
-                )}
-              </article>
-            ))}
+                  {groupItems.length > 0 ? (
+                    <div className="grid gap-3">
+                      {groupItems.map((flight: any, index: number) => (
+                        <article key={flight.offer_id || index} className="rounded-xl bg-[#1A1417] border border-white/[0.07] p-4">
+                          <div className="flex items-center justify-between gap-3 mb-3">
+                            <p className="text-lg font-semibold">{flight.price || 'Price unavailable'}</p>
+                            <span className="text-xs text-[#D6A8B3]">
+                              {flight.stops === 0 ? 'Non-stop' : `${flight.stops ?? '—'} stop(s)`}
+                            </span>
+                          </div>
+
+                          {flight.segments?.map((segment: any, j: number) => (
+                            <div key={j} className="border-t border-white/[0.07] pt-3 mt-2">
+                              <div className="flex justify-between text-sm gap-2">
+                                <span className="font-medium">{segment.airline} {segment.flight_number}</span>
+                                <span className="text-[#C99AA4] text-xs">{segment.departure}</span>
+                              </div>
+                              <div className="flex items-center gap-2 text-xs text-[#BCA7AF] mt-2">
+                                <span>{segment.origin}</span>
+                                <ArrowRight size={12} />
+                                <span>{segment.destination}</span>
+                                <span className="ml-auto">{segment.arrival}</span>
+                              </div>
+                            </div>
+                          ))}
+
+                          <div className="flex flex-wrap gap-2 mt-4">
+                            {flight.offer_id && onSelectFlight && (
+                              <button
+                                type="button"
+                                onClick={() => onSelectFlight(flight)}
+                                className="inline-flex items-center gap-2 rounded-xl bg-[#702D3C] hover:bg-[#873D50] px-3 py-2.5 text-xs font-semibold text-white"
+                              >
+                                Continue with this flight <Check size={12} />
+                              </button>
+                            )}
+                            {flight.offer_id && onRefreshFlight && (
+                              <button
+                                type="button"
+                                onClick={() => onRefreshFlight(flight.offer_id)}
+                                className="inline-flex items-center gap-2 rounded-xl border border-[#C99AA4]/30 bg-white/[0.04] px-3 py-2.5 text-xs font-semibold text-[#E7C2CA]"
+                              >
+                                Refresh live price <RefreshCw size={12} />
+                              </button>
+                            )}
+                            {!flight.offer_id && flight.url && (
+                              <a href={flight.url} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-2 rounded-xl bg-[#702D3C] hover:bg-[#873D50] px-3 py-2.5 text-xs font-semibold text-white">
+                                View flight <ExternalLink size={12} />
+                              </a>
+                            )}
+                          </div>
+                          {flight.expires_at && (
+                            <p className="text-[10px] text-[#BCA7AF] mt-2">Offer expiry: {new Date(flight.expires_at).toLocaleString('en-IN')}</p>
+                          )}
+                        </article>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="text-xs text-[#BCA7AF]">
+                      No structured live offers were returned for this leg.
+                      {group.search_url && (
+                        <a className="ml-1 text-[#D6A8B3] underline" href={group.search_url} target="_blank" rel="noopener noreferrer">Open route search</a>
+                      )}
+                    </p>
+                  )}
+                </div>
+              );
+            })}
           </div>
         </section>
       )}
@@ -451,6 +636,9 @@ export const TripResultCard = ({ data }: { data: TripData }) => {
           </div>
           <h3 className="text-xl font-semibold mt-1 mb-4">Continue your journey</h3>
 
+          <p className="text-xs text-[#BCA7AF] mb-3">
+            These links open the provider app. Check its live fare and pickup details there; Warik has not booked a ride.
+          </p>
           <div className="flex flex-wrap gap-2">
             {Object.entries(data.cabs).map(([key, url]: [string, any]) => (
               <a
@@ -460,7 +648,7 @@ export const TripResultCard = ({ data }: { data: TripData }) => {
                 rel="noopener noreferrer"
                 className="flex items-center gap-2 rounded-xl border border-white/10 bg-[#1A1417] px-4 py-3 text-sm capitalize hover:border-[#C99AA4]/50 transition-colors"
               >
-                {key} <ExternalLink size={13} />
+                Continue with {key} <ExternalLink size={13} />
               </a>
             ))}
           </div>

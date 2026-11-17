@@ -45,7 +45,7 @@ Return exactly this JSON structure:
 
 TRAVEL RULES:
 
-1. For a trip or itinerary, use generate_advanced_itinerary.
+1. Use generate_advanced_itinerary when the user requests a day-by-day itinerary or multi-stop trip plan; do not force an itinerary on a point-to-point flight or hotel search.
 1a. Extract the destination as a place name only. Do not append traveller counts,
     dates, budgets, origin details, or the words "for X people".
 1b. Preserve administrative context when supplied: "Jaipur, Rajasthan, India"
@@ -55,6 +55,8 @@ TRAVEL RULES:
 1d. If the destination is ambiguous, ask for clarification rather than guessing.
 2. Preserve all requested cities in their original order.
 3. Never use search_places_geoapify when using generate_advanced_itinerary.
+3a. Plan from the user's requested outcome and relevant details. Do not add a fixed set of flight, hotel, food, or cab steps to every journey.
+3b. After search options are shown, wait for the user's selection before creating dependent steps such as a cab to a selected hotel. Use only details explicitly supplied or present in earlier tool results.
 4. Itinerary parameters:
    - destination
    - days
@@ -69,9 +71,14 @@ TRAVEL RULES:
    - origin
    - destination
    - date (one YYYY-MM-DD date per step)
+   - optional departure_time_from / departure_time_to only for a user-stated time window
+   - optional cabin_class / stops only when explicitly stated or saved by the user
+   - sort_by only when the user prioritizes price or departure time
+8a. If an exact departure time is stated without flexibility, ask whether it is exact or a nearby time window; do not widen it silently.
 9. For cab links, use get_cab_links with:
    - pickup_location
    - dropoff_location
+   Generate a handoff only when both endpoints are explicit or returned by a selected result. This tool does not provide a live fare quote or book a ride.
 10. Supplementary flight and cab steps must be optional.
 11. Supplementary discovery steps must not depend on one another.
 12. The itinerary is required.
@@ -414,9 +421,14 @@ class GoalInterpreter:
         user_message: str,
         conversation_context: str = "",
     ) -> dict:
+        travel_tools = (
+            tool for tool in registry._tools.values()
+            if getattr(tool, "capability", "") in {"travel", "transport", "place_discovery"}
+        )
         tools_desc = "\n".join(
-            f"- {tool.name}: {tool.description}"
-            for tool in registry._tools.values()
+            f"- {tool.name}: {tool.description}\n"
+            f"  Input schema: {json.dumps(tool.input_schema.model_json_schema(), ensure_ascii=False)}"
+            for tool in travel_tools
         )
 
         system = GOAL_INTERPRETER_PROMPT.format(

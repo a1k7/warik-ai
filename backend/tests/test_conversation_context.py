@@ -31,7 +31,7 @@ def test_context_includes_recent_turns_and_active_workflow_bounded():
     assert "Plan Tokyo" in result
     assert "Make it cheaper" in result
     assert "COMPLETED" in result
-    assert len(result) <= 2400
+    assert len(result) <= 8000
 
 
 def test_resume_requires_explicit_unambiguous_command():
@@ -39,3 +39,100 @@ def test_resume_requires_explicit_unambiguous_command():
     assert is_resume_request("Please proceed with remaining steps")
     assert not is_resume_request("continue but make it cheaper")
     assert not is_resume_request("yes")
+
+
+def test_latest_user_message_is_included_once_when_already_persisted():
+    current = "I'll send Rahul the project report by Friday."
+    conversation = SimpleNamespace(
+        state_json={"conversation_context": {"latest_user_message": current}},
+        messages=[SimpleNamespace(role="user", content=current)],
+    )
+    result = build_conversation_context(conversation, current)
+    assert result.count(current) == 1
+    assert "Previous task request:" not in result
+
+
+def test_previous_request_is_not_duplicated_in_recent_history():
+    conversation = SimpleNamespace(
+        state_json={"conversation_context": {"latest_user_message": "Plan Tokyo"}},
+        messages=[
+            SimpleNamespace(role="user", content="Plan Tokyo"),
+            SimpleNamespace(role="assistant", content="How many days?"),
+            SimpleNamespace(role="user", content="Make it cheaper"),
+        ],
+    )
+    result = build_conversation_context(conversation, "Make it cheaper")
+    assert result.count("Plan Tokyo") == 1
+    assert result.count("Make it cheaper") == 1
+
+
+
+def test_context_carries_bounded_flight_options_for_follow_up():
+    flight_result = {
+        "type": "flight_list",
+        "live_inventory": True,
+        "filters_applied": {"departure_time_from": "18:00"},
+        "items": [
+            {
+                "price": "₹5,200",
+                "currency": "INR",
+                "departure_time": "2026-12-20 19:10",
+                "arrival_time": "2026-12-20 21:00",
+                "stops": 0,
+                "url": "https://example.test/flight/offer-1",
+                "segments": [{
+                    "airline": "Example Air",
+                    "flight_number": "EX101",
+                    "origin": "BOM",
+                    "destination": "DEL",
+                    "departure": "2026-12-20 19:10",
+                    "arrival": "2026-12-20 21:00",
+                }],
+                "provider_private_payload": {"token": "must-not-copy"},
+            }
+        ],
+    }
+    conversation = SimpleNamespace(
+        state_json={},
+        messages=[
+            SimpleNamespace(role="user", content="Find evening flights."),
+            SimpleNamespace(role="assistant", content="I found flight options.", structured_data=flight_result),
+            SimpleNamespace(role="user", content="Use the cheaper one and find a cab."),
+        ],
+    )
+
+    result = build_conversation_context(conversation, "Use the cheaper one and find a cab.")
+
+    assert "Previous travel options" in result
+    assert "2026-12-20 19:10" in result
+    assert "offer-1" in result
+    assert "must-not-copy" not in result
+
+
+
+def test_trip_summary_context_retains_external_flight_fallback_link():
+    summary = {
+        "type": "trip_summary",
+        "destination": "Mumbai",
+        "flights": [],
+        "flight_searches": [{
+            "search_url": "https://example.test/flights",
+            "live_inventory": False,
+            "resolution_status": "provider_unavailable",
+            "private_payload": "do-not-copy",
+        }],
+        "hotels": [],
+        "cabs": {},
+        "itinerary": None,
+        "failures": [],
+    }
+    conversation = SimpleNamespace(
+        state_json={},
+        messages=[
+            SimpleNamespace(role="assistant", content="Flight options are limited.", structured_data=summary),
+        ],
+    )
+    result = build_conversation_context(conversation)
+    assert "https://example.test/flights" in result
+    assert "provider_unavailable" in result
+    assert "do-not-copy" not in result

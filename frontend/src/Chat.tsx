@@ -3,7 +3,8 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import {
   ArrowLeft, Send, MapPin, Plane, Building2, Car, Calendar, Star,
   Utensils, Bookmark, Map, Plus, Trash2, Menu, X, MessageSquare,
-  Check, ExternalLink, Paperclip, Loader2
+  Check, ExternalLink, Paperclip, Loader2, Mic, Square, RefreshCw,
+  ShieldAlert, ShieldCheck
 } from 'lucide-react';
 import { AIOrb } from './AIOrb';
 import { TripResultCard } from './components/TripResultCard';
@@ -13,15 +14,85 @@ import ReactMarkdown from 'react-markdown';
 import {
   fetchConversations, createConversation, fetchConversationDetail,
   deleteConversation, sendMessageInConversation, saveFavoriteRestaurant,
-  uploadDocument, sendMessageWithDocument, confirmAgentAction, declineAgentAction
+  uploadDocument, sendMessageWithDocument, confirmAgentAction, declineAgentAction, commitmentsApi, voiceApi
 } from './api';
 import { Conversation, Message } from './types';
 
-const ResultCards = ({ data }: { data: any }) => {
+const ResultCards = ({ data, onSaveCommitment, savingCommitment, onRefreshFlight, onSelectFlight, onSelectHotel }: { data: any; onSaveCommitment?: (proposal: any) => void; savingCommitment?: boolean; onRefreshFlight?: (offerId: string) => void; onSelectFlight?: (item: any) => void; onSelectHotel?: (item: any, context: any) => void }) => {
   if (!data) return null;
 
+  if (data.type === 'reliability_checkpoint') {
+    const needsInput = data.status === 'NEEDS_INPUT';
+    return (
+      <section
+        className="mt-4 rounded-2xl border border-amber-400/30 bg-amber-400/[0.045] p-4"
+        role="status"
+        aria-label="Warik reliability checkpoint"
+      >
+        <div className="flex items-start gap-3">
+          <div className="rounded-xl bg-amber-400/10 p-2 text-amber-300">
+            {needsInput ? <ShieldAlert size={19} /> : <ShieldCheck size={19} />}
+          </div>
+          <div className="min-w-0 flex-1">
+            <div className="flex flex-wrap items-center gap-2">
+              <p className="text-sm font-bold text-white">Reality check</p>
+              <span className="rounded-full border border-amber-400/20 bg-amber-400/10 px-2 py-1 text-[9px] font-bold uppercase tracking-wider text-amber-200">
+                {needsInput ? 'Needs your input' : 'Not verified'}
+              </span>
+            </div>
+            <p className="mt-2 text-xs leading-relaxed text-jmuted">
+              {data.reason || 'Warik could not validate a safe execution plan.'}
+            </p>
+            {Array.isArray(data.missing_information) && data.missing_information.length > 0 && (
+              <div className="mt-3 rounded-xl border border-jmuted/10 bg-black/10 p-3">
+                <p className="text-[10px] font-bold uppercase tracking-wider text-jsecondary">Required to continue</p>
+                {data.missing_information.map((item: string) => (
+                  <p key={item} className="mt-1 text-xs text-white">• {item}</p>
+                ))}
+              </div>
+            )}
+            <p className="mt-3 flex items-center gap-1.5 text-[10px] font-semibold text-amber-200">
+              <ShieldCheck size={12} /> No booking, purchase or external action was made.
+            </p>
+          </div>
+        </div>
+      </section>
+    );
+  }
+
+  if (data.commitment_proposal) {
+    const proposal = data.commitment_proposal;
+    return (
+      <div className="mt-4 rounded-xl border border-jprimary/40 bg-jprimary/5 p-4">
+        <p className="text-xs font-bold uppercase tracking-wide text-jsecondary">Possible commitment detected</p>
+        <p className="mt-2 text-sm font-semibold text-white">{proposal.title}</p>
+        {(proposal.counterparty || proposal.due_at) && (
+          <div className="mt-2 flex flex-wrap gap-2 text-xs text-jmuted">
+            {proposal.counterparty && <span>Person: <strong className="text-white">{proposal.counterparty}</strong></span>}
+            {proposal.due_at && <span>Due: <strong className="text-white">{new Date(proposal.due_at).toLocaleString('en-IN', { timeZone: proposal.timezone || 'Asia/Kolkata', dateStyle: 'medium', timeStyle: 'short' })}</strong></span>}
+          </div>
+        )}
+        <p className="mt-1 text-xs text-jmuted">Review the extracted details. Nothing has been saved yet.</p>
+        {proposal.saved ? (
+          <p className="mt-3 text-xs font-semibold text-emerald-400">✓ Added to your Action Ledger</p>
+        ) : (
+          <button type="button" disabled={savingCommitment} onClick={() => onSaveCommitment?.(proposal)} className="mt-3 rounded-lg bg-jprimary px-4 py-2 text-xs font-bold text-white disabled:opacity-50">
+            {savingCommitment ? 'Saving…' : 'Add to Action Ledger'}
+          </button>
+        )}
+      </div>
+    );
+  }
+
   if (data.type === 'trip_summary' || data.type === 'advanced_itinerary') {
-    return <TripResultCard data={data as any} />;
+    return (
+      <TripResultCard
+        data={data as any}
+        onSelectHotel={onSelectHotel}
+        onSelectFlight={onSelectFlight}
+        onRefreshFlight={onRefreshFlight}
+      />
+    );
   }
 
   if (data.type === 'workflow_status') {
@@ -34,10 +105,11 @@ const ResultCards = ({ data }: { data: any }) => {
         <h4 className="font-bold text-white text-sm flex items-center gap-2">
           <Car size={16} className="text-jprimary" /> Travel from {data.origin} to {data.destination}
         </h4>
+        <p className="text-xs text-jmuted">This opens the provider app for you to review availability and fare. No ride has been booked by Warik.</p>
         <div className="flex flex-col gap-2">
           {Object.entries(data.links || {}).map(([key, url]: [string, any]) => (
             <a key={key} href={url} target="_blank" rel="noopener noreferrer" className="flex justify-between items-center bg-jbg hover:bg-jmuted/10 p-3 rounded-lg border border-jmuted/10 transition-colors">
-              <span className="text-sm font-bold text-white flex items-center gap-2 capitalize">Book {key}</span>
+              <span className="text-sm font-bold text-white flex items-center gap-2 capitalize">Continue in {key}</span>
               <ExternalLink size={14} className="text-jsecondary" />
             </a>
           ))}
@@ -100,14 +172,34 @@ const ResultCards = ({ data }: { data: any }) => {
           </div>
         )}
 
+        {data.live_inventory === true && data.source && (
+          <p className="text-[10px] text-jsecondary flex items-center gap-1">
+            <Check size={12} /> Live provider results · {data.source}
+          </p>
+        )}
         {items.length > 0 ? (
           items.map((item: any, idx: number) => (
             <div
               key={idx}
               className="bg-jcard border border-jprimary/30 rounded-2xl overflow-hidden flex flex-col shadow-lg w-full"
             >
+              {item.image_url && (
+                <img
+                  src={item.image_url}
+                  alt={item.name ? `${item.name} property photo` : 'Accommodation photo'}
+                  loading="lazy"
+                  className="w-full h-36 object-cover bg-jbg"
+                />
+              )}
               <div className="p-4 flex flex-col gap-2">
-                <h3 className="font-bold text-white text-base">{item.name}</h3>
+                <div className="flex items-start justify-between gap-3">
+                  <h3 className="font-bold text-white text-base">{item.name}</h3>
+                  {item.rating !== undefined && item.rating !== null && item.rating !== '' && (
+                    <span className="shrink-0 rounded-lg bg-jprimary/10 px-2 py-1 text-xs font-bold text-jsecondary flex items-center gap-1">
+                      <Star size={11} /> {item.rating}
+                    </span>
+                  )}
+                </div>
                 {item.address && (
                   <p className="text-xs text-jmuted flex items-start gap-1">
                     <MapPin size={14} />
@@ -126,7 +218,7 @@ const ResultCards = ({ data }: { data: any }) => {
                       rel="noopener noreferrer"
                       className="text-xs font-bold text-white bg-jprimary hover:bg-jsecondary px-4 py-2 rounded-lg transition-colors flex items-center gap-2"
                     >
-                      Book Now <ExternalLink size={12} />
+                      {String(item.provider || data.source || '').toLowerCase().includes('booking.com') ? 'View on Booking.com' : 'Check availability'} <ExternalLink size={12} />
                     </a>
                   )}
                 </div>
@@ -134,6 +226,15 @@ const ResultCards = ({ data }: { data: any }) => {
                   <p className="text-xs text-jmuted">
                     Total stay: {item.total_stay}
                   </p>
+                )}
+                {onSelectHotel && (
+                  <button
+                    type="button"
+                    onClick={() => onSelectHotel(item, data.search_context || {})}
+                    className="mt-1 inline-flex items-center justify-center gap-2 rounded-lg border border-jprimary/40 bg-jprimary/10 px-3 py-2 text-xs font-bold text-jsecondary hover:bg-jprimary/20"
+                  >
+                    Use this stay in my trip <Check size={12} />
+                  </button>
                 )}
               </div>
             </div>
@@ -222,6 +323,9 @@ const ResultCards = ({ data }: { data: any }) => {
                 <h4 className="font-bold text-white text-sm flex items-center gap-2">
                   <Plane size={16} className="text-jprimary" />
                   {item.segments?.[0]?.airline || 'Flight'}
+                  {item.segments?.[0]?.flight_number && (
+                    <span className="text-[10px] text-jmuted font-medium">{item.segments[0].flight_number}</span>
+                  )}
                 </h4>
                 <span className="text-xs font-bold text-jsecondary bg-jprimary/10 px-2 py-1 rounded">
                   {item.price || 'Price unavailable'}
@@ -241,16 +345,36 @@ const ResultCards = ({ data }: { data: any }) => {
                 ))}
               </div>
 
-              <div className="flex justify-between items-center mt-2 pt-2 border-t border-jmuted/10">
-                {item.url && (
+              <div className="flex flex-wrap justify-between items-center gap-2 mt-2 pt-2 border-t border-jmuted/10">
+                {item.offer_id && onSelectFlight && (
+                  <button
+                    type="button"
+                    onClick={() => onSelectFlight(item)}
+                    className="text-xs font-bold text-white bg-jprimary hover:bg-jsecondary px-3 py-1.5 rounded flex items-center gap-2"
+                  >
+                    Continue with this flight <Check size={12} />
+                  </button>
+                )}
+                {item.offer_id && onRefreshFlight ? (
+                  <button
+                    type="button"
+                    onClick={() => onRefreshFlight(item.offer_id)}
+                    className="text-xs font-bold text-white bg-jprimary hover:bg-jsecondary px-3 py-1.5 rounded flex items-center gap-2"
+                  >
+                    Refresh live price <RefreshCw size={12} />
+                  </button>
+                ) : item.url ? (
                   <a
                     href={item.url}
                     target="_blank"
                     rel="noopener noreferrer"
                     className="text-xs font-bold text-white bg-jprimary hover:bg-jsecondary px-3 py-1.5 rounded flex items-center gap-2"
                   >
-                    Book Flight <ExternalLink size={12} />
+                    View external options <ExternalLink size={12} />
                   </a>
+                ) : null}
+                {item.expires_at && (
+                  <span className="text-[10px] text-jmuted">Offer expiry: {new Date(item.expires_at).toLocaleString('en-IN')}</span>
                 )}
                 {typeof item.stops === 'number' && (
                   <span className="text-xs text-jmuted">
@@ -305,12 +429,30 @@ export const Chat = () => {
   const [uploading, setUploading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  // Voice audio is only transcribed here; the user reviews it before it is sent.
+  const [voiceOpen, setVoiceOpen] = useState(false);
+  const [voiceState, setVoiceState] = useState<'idle' | 'recording' | 'transcribing'>('idle');
+  const [voiceLanguage, setVoiceLanguage] = useState('hi-IN');
+  const [voiceTranscript, setVoiceTranscript] = useState('');
+  const [voiceError, setVoiceError] = useState('');
+  const [recordingSeconds, setRecordingSeconds] = useState(0);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const mediaStreamRef = useRef<MediaStream | null>(null);
+  const audioChunksRef = useRef<BlobPart[]>([]);
+  const recordingStartedAtRef = useRef(0);
+  const recordingTimerRef = useRef<number | null>(null);
+  const discardRecordingRef = useRef(false);
+
   const bottomRef = useRef<HTMLDivElement>(null);
   const hasProcessedInitialMsg = useRef(false);
 
   useEffect(() => {
     const init = async () => {
       try {
+        if (location.state?.openVoice) {
+          setVoiceOpen(true);
+          window.history.replaceState({}, document.title);
+        }
         const data = await fetchConversations();
         setConversations(data);
 
@@ -374,6 +516,76 @@ export const Chat = () => {
     } catch (err) {
       setMessages(prev => [...prev, { id: Date.now() + 1, role: 'assistant', content: 'Error connecting to backend.', created_at: new Date().toISOString() }]);
     } finally { setIsLoading(false); }
+  };
+
+  const handleSelectFlight = (item: any) => {
+    if (!activeConvId || isLoading || !item?.offer_id) return;
+    const firstSegment = item.segments?.[0] || {};
+    const lastSegment = item.segments?.[item.segments.length - 1] || {};
+    const details = [
+      firstSegment.airline || 'Airline not supplied',
+      firstSegment.flight_number || '',
+      firstSegment.origin && lastSegment.destination
+        ? `${firstSegment.origin} to ${lastSegment.destination}`
+        : '',
+      item.departure_time ? `departure ${item.departure_time}` : '',
+      item.arrival_time ? `arrival ${item.arrival_time}` : '',
+      item.price || '',
+    ].filter(Boolean).join(', ');
+
+    void executeSend(
+      `I select the flight offer ${item.offer_id} (${details}). Keep this exact offer as my preferred option in this conversation, but do not book it. Tell me the next useful step and ask only for missing details needed for any airport transfer or hotel planning. Do not assume a hotel, pickup point or drop-off location.`,
+      activeConvId,
+    );
+  };
+
+  const handleSelectHotel = (item: any, context: any) => {
+    if (!activeConvId || isLoading || !item?.name) return;
+    const stay = [
+      context?.city ? `in ${context.city}` : '',
+      context?.check_in && context?.check_out ? `from ${context.check_in} to ${context.check_out}` : '',
+      item.total_stay ? `total ${item.total_stay}` : '',
+      item.address ? `at ${item.address}` : '',
+      item.accommodation_id ? `provider property ID ${item.accommodation_id}` : '',
+    ].filter(Boolean).join(', ');
+    void executeSend(
+      `I select ${item.name} (${stay}). Keep this as my preferred stay in this trip, but do not book it. Based on my selected flight and this property, can you arrange an airport transfer? Ask me only for any essential missing details.`,
+      activeConvId,
+    );
+  };
+
+  const handleRefreshFlight = (offerId: string) => {
+    if (!activeConvId || isLoading || !offerId) return;
+    void executeSend(
+      `Please refresh this exact flight offer and show its current price and expiry: ${offerId}`,
+      activeConvId,
+    );
+  };
+
+  const handleSaveCommitment = async (message: Message, proposal: any) => {
+    if (!proposal?.title || !activeConvId) return;
+    setConfirmationBusyId(message.id);
+    try {
+      await commitmentsApi.create({
+        title: proposal.title,
+        details: proposal.details || undefined,
+        counterparty: proposal.counterparty || undefined,
+        due_at: proposal.due_at || undefined,
+        source: 'conversation',
+      });
+      setMessages(prev => prev.map(item => item.id === message.id ? {
+        ...item,
+        structured_data: {
+          ...(item.structured_data || {}),
+          type: item.structured_data?.type ?? 'commitment_proposal',
+          commitment_proposal: { ...proposal, saved: true },
+        },
+      } : item));
+    } catch (error: any) {
+      window.alert(error?.response?.data?.detail || 'Could not add this commitment to the Action Ledger.');
+    } finally {
+      setConfirmationBusyId(null);
+    }
   };
 
   const handleApprove = async (message: Message) => {
@@ -463,6 +675,139 @@ export const Chat = () => {
     }
   };
 
+
+  const clearRecordingTimer = () => {
+    if (recordingTimerRef.current !== null) {
+      window.clearInterval(recordingTimerRef.current);
+      recordingTimerRef.current = null;
+    }
+  };
+
+  const releaseMicrophone = () => {
+    mediaStreamRef.current?.getTracks().forEach(track => track.stop());
+    mediaStreamRef.current = null;
+    mediaRecorderRef.current = null;
+  };
+
+  const startVoiceRecording = async () => {
+    setVoiceError('');
+    setVoiceTranscript('');
+    setRecordingSeconds(0);
+    discardRecordingRef.current = false;
+
+    if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === 'undefined') {
+      setVoiceError('Voice recording is not supported in this browser. Use a current browser over HTTPS.');
+      return;
+    }
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+      });
+      mediaStreamRef.current = stream;
+
+      const supportedTypes = [
+        'audio/webm;codecs=opus',
+        'audio/mp4',
+        'audio/ogg;codecs=opus',
+        'audio/webm',
+      ];
+      const mimeType = supportedTypes.find(type => MediaRecorder.isTypeSupported(type));
+      const recorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
+      mediaRecorderRef.current = recorder;
+      audioChunksRef.current = [];
+      recordingStartedAtRef.current = Date.now();
+
+      recorder.ondataavailable = event => {
+        if (event.data.size > 0) audioChunksRef.current.push(event.data);
+      };
+      recorder.onerror = () => {
+        clearRecordingTimer();
+        releaseMicrophone();
+        setVoiceState('idle');
+        setVoiceError('The recording was interrupted. Please try again.');
+      };
+      recorder.onstop = async () => {
+        clearRecordingTimer();
+        const duration = Math.max(1, Math.round((Date.now() - recordingStartedAtRef.current) / 1000));
+        const audio = new Blob(audioChunksRef.current, { type: recorder.mimeType || 'audio/webm' });
+        audioChunksRef.current = [];
+        releaseMicrophone();
+
+        if (discardRecordingRef.current) {
+          discardRecordingRef.current = false;
+          setVoiceState('idle');
+          return;
+        }
+        if (!audio.size) {
+          setVoiceState('idle');
+          setVoiceError('No audio was captured. Please try again.');
+          return;
+        }
+
+        setVoiceState('transcribing');
+        try {
+          const result = await voiceApi.transcribe(audio, voiceLanguage, duration);
+          setVoiceTranscript(result.transcript.trim());
+          if (!result.transcript.trim()) setVoiceError('I could not hear any words. Please record again.');
+        } catch (error: any) {
+          const detail = error?.response?.data?.detail;
+          setVoiceError(typeof detail === 'string' ? detail : 'Transcription failed. Check your connection and voice setup, then try again.');
+        } finally {
+          setVoiceState('idle');
+        }
+      };
+
+      recorder.start(250);
+      setVoiceState('recording');
+      recordingTimerRef.current = window.setInterval(() => {
+        const elapsed = Math.floor((Date.now() - recordingStartedAtRef.current) / 1000);
+        setRecordingSeconds(elapsed);
+        if (elapsed >= 28 && mediaRecorderRef.current?.state === 'recording') {
+          mediaRecorderRef.current.stop();
+        }
+      }, 500);
+    } catch (error: any) {
+      releaseMicrophone();
+      const denied = error?.name === 'NotAllowedError' || error?.name === 'PermissionDeniedError';
+      setVoiceError(denied
+        ? 'Microphone access is blocked. Allow microphone permission in your browser settings and try again.'
+        : 'Could not access the microphone. Check that one is connected and try again.');
+    }
+  };
+
+  const stopVoiceRecording = () => {
+    if (mediaRecorderRef.current?.state === 'recording') mediaRecorderRef.current.stop();
+  };
+
+  const closeVoiceMode = () => {
+    if (mediaRecorderRef.current?.state === 'recording') {
+      discardRecordingRef.current = true;
+      mediaRecorderRef.current.stop();
+    } else {
+      clearRecordingTimer();
+      releaseMicrophone();
+    }
+    setVoiceOpen(false);
+    setVoiceState('idle');
+    setVoiceTranscript('');
+    setVoiceError('');
+  };
+
+  const useVoiceTranscript = () => {
+    setInput(voiceTranscript);
+    setVoiceOpen(false);
+    setVoiceTranscript('');
+    setVoiceError('');
+  };
+
+  useEffect(() => () => {
+    discardRecordingRef.current = true;
+    clearRecordingTimer();
+    if (mediaRecorderRef.current?.state === 'recording') mediaRecorderRef.current.stop();
+    releaseMicrophone();
+  }, []);
+
   return (
     <div className="warik-chat flex h-[100dvh] bg-jbg w-full overflow-hidden relative">
       {/* SIDEBAR */}
@@ -515,7 +860,7 @@ export const Chat = () => {
                     <div className="prose prose-invert prose-sm max-w-none prose-a:text-jsecondary prose-a:underline prose-strong:text-white prose-p:mb-2 prose-p:last:mb-0">
                       <ReactMarkdown>{msg.content}</ReactMarkdown>
                     </div>
-                    {msg.structured_data && <ResultCards data={msg.structured_data} />}
+                    {msg.structured_data && <ResultCards data={msg.structured_data} onSaveCommitment={(proposal) => handleSaveCommitment(msg, proposal)} savingCommitment={confirmationBusyId === msg.id} onRefreshFlight={handleRefreshFlight} onSelectFlight={handleSelectFlight} onSelectHotel={handleSelectHotel} />}
                     {msg.needs_confirmation && msg.confirmation_token && msg.confirmation_status !== 'declined' && msg.confirmation_status !== 'approved' && (
                       <div className="mt-4 rounded-xl border border-amber-400/40 bg-amber-400/5 p-4" role="group" aria-label="Action approval">
                         <div className="flex items-start gap-2">
@@ -588,6 +933,16 @@ export const Chat = () => {
               {uploading ? <Loader2 size={18} className="animate-spin text-jprimary" /> : <Paperclip size={18} />}
             </button>
 
+            <button
+              type="button"
+              onClick={() => { setVoiceOpen(true); setVoiceError(''); setVoiceTranscript(''); }}
+              disabled={isLoading || uploading}
+              className="warik-voice-trigger w-12 h-12 shrink-0 rounded-xl border flex items-center justify-center transition-colors disabled:opacity-50"
+              title="Talk to Warik"
+              aria-label="Open voice mode"
+            >
+              <Mic size={18} />
+            </button>
             <input
               type="text"
               value={input}
@@ -606,6 +961,66 @@ export const Chat = () => {
           </form>
         </div>
       </div>
+
+
+      {voiceOpen && (
+        <div className="warik-voice-backdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget && voiceState !== 'transcribing') closeVoiceMode(); }}>
+          <section className="warik-voice-panel" role="dialog" aria-modal="true" aria-labelledby="warik-voice-title">
+            <button type="button" className="warik-voice-close" onClick={closeVoiceMode} aria-label="Close voice mode" disabled={voiceState === 'transcribing'}><X size={18} /></button>
+            <p className="warik-voice-kicker">WARIK · VOICE</p>
+            <h2 id="warik-voice-title">Say what you need. Stay in control.</h2>
+            <p className="warik-voice-subtitle">Speak naturally in your language. Check the words, edit anything unclear, then send.</p>
+
+            <div className="warik-voice-orb">
+              <AIOrb state={voiceState === 'recording' ? 'listening' : voiceState === 'transcribing' ? 'thinking' : 'idle'} size="lg" />
+            </div>
+
+            <div className="warik-voice-status" aria-live="polite">
+              {voiceState === 'recording' ? 'Listening…' : voiceState === 'transcribing' ? 'Understanding your words…' : voiceTranscript ? 'Transcript ready for review' : 'Ready when you are'}
+              {voiceState === 'recording' && <span className="warik-voice-time">{String(Math.floor(recordingSeconds / 60)).padStart(2, '0')}:{String(recordingSeconds % 60).padStart(2, '0')}</span>}
+            </div>
+
+            <label className="warik-voice-language">
+              <span>Speaking language</span>
+              <select value={voiceLanguage} onChange={event => setVoiceLanguage(event.target.value)} disabled={voiceState !== 'idle' || Boolean(voiceTranscript)}>
+                <option value="hi-IN">Hindi · हिन्दी</option>
+                <option value="en-IN">English · India</option>
+                <option value="mr-IN">Marathi · मराठी</option>
+                <option value="gu-IN">Gujarati · ગુજરાતી</option>
+                <option value="bn-IN">Bengali · বাংলা</option>
+                <option value="kn-IN">Kannada · ಕನ್ನಡ</option>
+                <option value="ml-IN">Malayalam · മലയാളം</option>
+                <option value="pa-IN">Punjabi · ਪੰਜਾਬੀ</option>
+                <option value="ta-IN">Tamil · தமிழ்</option>
+                <option value="te-IN">Telugu · తెలుగు</option>
+              </select>
+            </label>
+
+            {voiceError && <p className="warik-voice-error" role="alert">{voiceError}</p>}
+
+            {voiceTranscript && (
+              <label className="warik-voice-transcript">
+                <span>Review and edit your words</span>
+                <textarea value={voiceTranscript} onChange={event => setVoiceTranscript(event.target.value)} rows={3} />
+              </label>
+            )}
+
+            <div className="warik-voice-actions">
+              {voiceState === 'recording' ? (
+                <button type="button" className="warik-voice-primary is-recording" onClick={stopVoiceRecording}><Square size={15} fill="currentColor" /> Stop recording</button>
+              ) : voiceState === 'transcribing' ? (
+                <button type="button" className="warik-voice-primary" disabled><Loader2 size={16} className="animate-spin" /> Transcribing</button>
+              ) : voiceTranscript ? (
+                <button type="button" className="warik-voice-primary" onClick={useVoiceTranscript} disabled={!voiceTranscript.trim()}><Check size={16} /> Use transcript</button>
+              ) : (
+                <button type="button" className="warik-voice-primary" onClick={startVoiceRecording}><Mic size={17} /> Start speaking</button>
+              )}
+              {voiceState !== 'transcribing' && <button type="button" className="warik-voice-secondary" onClick={closeVoiceMode}>Cancel</button>}
+            </div>
+            <p className="warik-voice-privacy">Up to 28 seconds per recording. Audio goes to your configured speech provider for transcription; the assistant receives nothing until you review and send.</p>
+          </section>
+        </div>
+      )}
     </div>
   );
 };
