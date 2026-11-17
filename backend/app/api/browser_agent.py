@@ -21,8 +21,8 @@ router = APIRouter(prefix="/browser-agent", tags=["browser-agent"])
 
 def _redact(value: str) -> str:
     """Remove obvious contact and payment-number patterns before persistence."""
-    value = re.sub(r"[A-Z0-9._%+-]+@[A-Z0-9.-]+\\.[A-Z]{2,}", "[redacted-email]", value, flags=re.IGNORECASE)
-    value = re.sub(r"(?<!\\d)(?:\\+?\\d[\\d\\s().-]{8,}\\d)(?!\\d)", "[redacted-number]", value)
+    value = re.sub(r"[A-Z0-9._%+-]+@[A-Z0-9.-]+[.][A-Z]{2,}", "[redacted-email]", value, flags=re.IGNORECASE)
+    value = re.sub(r"(?<![0-9])(?:[+]?[0-9][0-9 .()]{8,}[0-9])(?![0-9])", "[redacted-number]", value)
     return value
 
 
