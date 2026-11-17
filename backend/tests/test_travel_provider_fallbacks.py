@@ -356,3 +356,92 @@ def test_flight_search_stops_at_nonstop_when_requested(monkeypatch):
 
     assert [item["stops"] for item in result.data["items"]] == [0]
     assert calls[0][calls[0].index("--stops") + 1] == "nonstop"
+
+
+
+def test_duffel_search_maps_live_offers_to_flight_cards(monkeypatch):
+    monkeypatch.setattr(travel_apis.settings, "duffel_api_key", "test-duffel-token")
+    _mock_airports(monkeypatch)
+    calls = []
+    offer = {
+        "id": "off_test123",
+        "total_amount": "6400.00",
+        "total_currency": "INR",
+        "expires_at": "2026-12-20T10:30:00Z",
+        "owner": {"name": "Example Airline"},
+        "slices": [{
+            "segments": [{
+                "origin": {"iata_code": "ORG", "name": "Origin Airport"},
+                "destination": {"iata_code": "DST", "name": "Destination Airport"},
+                "departing_at": "2026-12-20T05:30:00+05:30",
+                "arriving_at": "2026-12-20T08:10:00+05:30",
+                "operating_carrier": {"name": "Example Operating Carrier"},
+                "marketing_carrier_flight_number": "EX101",
+            }]
+        }],
+    }
+
+    class Response:
+        def raise_for_status(self):
+            return None
+        def json(self):
+            return {"data": {"id": "orq_test123", "offers": [offer]}}
+
+    class Client:
+        def __init__(self, **kwargs):
+            pass
+        def __enter__(self):
+            return self
+        def __exit__(self, *args):
+            return False
+        def post(self, url, **kwargs):
+            calls.append((url, kwargs))
+            return Response()
+
+    monkeypatch.setattr(travel_apis.httpx, "Client", Client)
+    result = RealFlightSearchTool().execute(None, _flight_params(passengers=2))
+
+    assert result.success
+    assert result.data["source"] == "Duffel"
+    assert result.data["offer_request_id"] == "orq_test123"
+    assert result.data["live_inventory"] is True
+    assert result.data["items"][0]["offer_id"] == "off_test123"
+    assert result.data["items"][0]["price"] == "₹6,400"
+    assert result.data["items"][0]["segments"][0]["airline"] == "Example Operating Carrier"
+    assert result.data["items"][0]["departure_time"] == "2026-12-20 05:30"
+    body = calls[0][1]["json"]["data"]
+    assert len(body["passengers"]) == 2
+    assert body["slices"][0]["departure_date"] == "2026-12-20"
+
+
+def test_duffel_search_sends_time_window_and_stops(monkeypatch):
+    monkeypatch.setattr(travel_apis.settings, "duffel_api_key", "test-duffel-token")
+    _mock_airports(monkeypatch)
+    calls = []
+
+    class Response:
+        def raise_for_status(self):
+            return None
+        def json(self):
+            return {"data": {"offers": []}}
+
+    class Client:
+        def __init__(self, **kwargs):
+            pass
+        def __enter__(self):
+            return self
+        def __exit__(self, *args):
+            return False
+        def post(self, url, **kwargs):
+            calls.append(kwargs)
+            return Response()
+
+    monkeypatch.setattr(travel_apis.httpx, "Client", Client)
+    result = RealFlightSearchTool().execute(
+        None,
+        _flight_params(departure_time_from="06:00", departure_time_to="09:00", stops="nonstop"),
+    )
+    assert result.success
+    request_data = calls[0]["json"]["data"]
+    assert request_data["slices"][0]["departure_time"] == {"from": "06:00", "to": "09:00"}
+    assert request_data["max_connections"] == 0

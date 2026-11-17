@@ -195,6 +195,7 @@ class FlightInput(BaseModel):
         default=None,
         description="Optional ranking preference. If omitted, preserve provider ranking.",
     )
+    passengers: int = Field(default=1, ge=1, le=9, description="Number of adult passengers.")
 
     @field_validator("departure_time_from", "departure_time_to")
     @classmethod
@@ -206,6 +207,80 @@ class FlightInput(BaseModel):
         except ValueError as exc:
             raise ValueError("Departure times must use 24-hour HH:MM format.") from exc
         return value
+
+
+
+def _duffel_datetime(value: str | None) -> str | None:
+    """Format a provider ISO timestamp for the current flight result UI."""
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        return parsed.strftime("%Y-%m-%d %H:%M")
+    except (TypeError, ValueError):
+        return str(value)[:32]
+
+
+def _duffel_offer_to_flight_item(offer: dict) -> dict | None:
+    """Normalize a Duffel offer without inventing prices or booking URLs."""
+    slices = offer.get("slices") or []
+    if not slices or not isinstance(slices[0], dict):
+        return None
+    raw_segments = slices[0].get("segments") or []
+    if not raw_segments:
+        return None
+
+    segments = []
+    for segment in raw_segments:
+        if not isinstance(segment, dict):
+            continue
+        origin = segment.get("origin") or {}
+        destination = segment.get("destination") or {}
+        operating = segment.get("operating_carrier") or {}
+        marketing = segment.get("marketing_carrier") or {}
+        carrier_name = operating.get("name") or marketing.get("name") or "Airline not supplied"
+        segments.append({
+            "airline": carrier_name,
+            "operating_carrier": carrier_name,
+            "flight_number": segment.get("marketing_carrier_flight_number") or segment.get("operating_carrier_flight_number") or "Not supplied",
+            "origin": origin.get("iata_code") or origin.get("name") or "",
+            "destination": destination.get("iata_code") or destination.get("name") or "",
+            "departure": _duffel_datetime(segment.get("departing_at")),
+            "arrival": _duffel_datetime(segment.get("arriving_at")),
+            "origin_airport_name": origin.get("name"),
+            "destination_airport_name": destination.get("name"),
+            "origin_terminal": segment.get("origin_terminal"),
+            "destination_terminal": segment.get("destination_terminal"),
+        })
+    if not segments:
+        return None
+
+    amount = offer.get("total_amount")
+    currency = str(offer.get("total_currency") or "").upper()
+    try:
+        numeric_amount = float(amount)
+    except (TypeError, ValueError):
+        numeric_amount = None
+    price = (
+        format_price(numeric_amount, currency)
+        if numeric_amount is not None and numeric_amount > 0 and currency
+        else "Price unavailable"
+    )
+    owner = offer.get("owner") or {}
+    return {
+        "offer_id": offer.get("id"),
+        "price": price,
+        "amount": numeric_amount,
+        "currency": currency or None,
+        "departure_time": segments[0]["departure"],
+        "arrival_time": segments[-1]["arrival"],
+        "segments": segments,
+        "stops": max(0, len(segments) - 1),
+        "operating_carrier": segments[0]["operating_carrier"],
+        "owner": owner.get("name"),
+        "expires_at": offer.get("expires_at"),
+        "live_mode": offer.get("live_mode"),
+    }
 
 class RealFlightSearchTool(BaseTool):
     name = "search_flights_real"
@@ -230,7 +305,204 @@ class RealFlightSearchTool(BaseTool):
 
     supported_operations = ("search",)
 
-    def execute(
+    def __init__(self):
+        # Expose the configured flight provider in the live tool manifest.
+        if settings.duffel_api_key.strip():
+            self.provider_adapters = ({"provider_id": "duffel", "display_name": "Duffel"},)
+        else:
+            self.provider_adapters = ({"provider_id": "trvl_cli", "display_name": "TRVL CLI adapter"},)
+
+    def execute(self, ctx: ToolContext, params: FlightInput) -> ToolResult:
+        if settings.duffel_api_key.strip():
+            return self._search_duffel(params)
+        return self._execute_trvl_cli(ctx, params)
+
+    def execute_for_provider(self, ctx: ToolContext, params: FlightInput, provider_id: str) -> ToolResult:
+        provider_id = str(provider_id).strip().lower()
+        if provider_id == "duffel" and settings.duffel_api_key.strip():
+            return self._search_duffel(params)
+        if provider_id == "trvl_cli" and not settings.duffel_api_key.strip():
+            return self._execute_trvl_cli(ctx, params)
+        return ToolResult(success=False, message=f"Flight provider '{provider_id}' is not configured for this deployment.")
+
+    @staticmethod
+    def _external_fallback(params: FlightInput, reason: str, **extra) -> ToolResult:
+        return ToolResult(
+            success=True,
+            message=reason,
+            data={
+                "type": "flight_list",
+                "items": [],
+                "search_url": _flight_search_url(params),
+                "live_inventory": False,
+                "resolution_status": "provider_unavailable",
+                **extra,
+            },
+            retry_safe=True,
+        )
+
+    def _search_duffel(self, params: FlightInput) -> ToolResult:
+        """Search Duffel v2 flight offers. This endpoint does not book or collect payment."""
+        try:
+            parsed_date = datetime.strptime(params.date, "%Y-%m-%d").date()
+            if parsed_date.isoformat() != params.date:
+                raise ValueError("Date must use YYYY-MM-DD format.")
+            if parsed_date < datetime.now().date():
+                raise ValueError("The departure date is in the past.")
+        except (TypeError, ValueError) as exc:
+            return ToolResult(success=False, message=f"Flight search skipped: {exc}")
+
+        try:
+            origin_airports = resolve_airport_candidates(params.origin)
+            destination_airports = resolve_airport_candidates(params.destination)
+        except AirportResolutionError as exc:
+            return self._external_fallback(
+                params,
+                "Airport resolution is temporarily unavailable. No live flight inventory was queried.",
+                provider_error=str(exc),
+            )
+
+        if not origin_airports or not destination_airports:
+            return self._external_fallback(
+                params,
+                "I couldn't resolve both locations to airports, so no live flight inventory was queried. Please specify a city or airport.",
+                resolution_status="airport_not_found",
+                origin_airport_candidates=origin_airports,
+                destination_airport_candidates=destination_airports,
+            )
+
+        origin_iata = str(origin_airports[0].get("iata") or "").upper()
+        destination_iata = str(destination_airports[0].get("iata") or "").upper()
+        if not re.fullmatch(r"[A-Z]{3}", origin_iata) or not re.fullmatch(r"[A-Z]{3}", destination_iata):
+            return self._external_fallback(params, "A valid airport code could not be resolved for both locations.", resolution_status="airport_not_found")
+
+        slice_data = {
+            "origin": origin_iata,
+            "destination": destination_iata,
+            "departure_date": params.date,
+        }
+        if params.departure_time_from or params.departure_time_to:
+            time_window = {}
+            if params.departure_time_from:
+                time_window["from"] = params.departure_time_from
+            if params.departure_time_to:
+                time_window["to"] = params.departure_time_to
+            slice_data["departure_time"] = time_window
+
+        request_data = {
+            "slices": [slice_data],
+            "passengers": [{"type": "adult"} for _ in range(params.passengers)],
+            "max_connections": {"nonstop": 0, "1": 1, "2": 2}.get(params.stops, 2),
+        }
+        if params.cabin_class:
+            request_data["cabin_class"] = params.cabin_class
+
+        try:
+            with httpx.Client(timeout=httpx.Timeout(40.0)) as client:
+                response = client.post(
+                    "https://api.duffel.com/air/offer_requests",
+                    params={"return_offers": "true", "supplier_timeout": "15000", "view": "offers"},
+                    headers={
+                        "Authorization": f"Bearer {settings.duffel_api_key.strip()}",
+                        "Accept": "application/json",
+                        "Content-Type": "application/json",
+                        "Duffel-Version": "v2",
+                    },
+                    json={"data": request_data},
+                )
+                response.raise_for_status()
+                payload = response.json()
+
+            request_resource = payload.get("data") or {}
+            offers = request_resource.get("offers") or []
+            items = [
+                item for offer in offers
+                if isinstance(offer, dict)
+                and (item := _duffel_offer_to_flight_item(offer)) is not None
+            ]
+
+            def departure_minutes(item: dict) -> int | None:
+                try:
+                    value = datetime.strptime(item["departure_time"], "%Y-%m-%d %H:%M")
+                    return value.hour * 60 + value.minute
+                except (KeyError, TypeError, ValueError):
+                    return None
+
+            earliest = (
+                int(params.departure_time_from[:2]) * 60 + int(params.departure_time_from[3:])
+                if params.departure_time_from else None
+            )
+            latest = (
+                int(params.departure_time_to[:2]) * 60 + int(params.departure_time_to[3:])
+                if params.departure_time_to else None
+            )
+            filtered = []
+            for item in items:
+                minutes = departure_minutes(item)
+                if (earliest is not None or latest is not None) and minutes is None:
+                    continue
+                if minutes is not None:
+                    if earliest is not None and latest is not None and earliest > latest:
+                        if not (minutes >= earliest or minutes <= latest):
+                            continue
+                    elif earliest is not None and minutes < earliest:
+                        continue
+                    elif latest is not None and minutes > latest:
+                        continue
+                if params.stops == "nonstop" and item["stops"] != 0:
+                    continue
+                if params.stops in {"1", "2"} and item["stops"] > int(params.stops):
+                    continue
+                filtered.append(item)
+
+            if params.sort_by == "departure_time":
+                filtered.sort(key=lambda item: departure_minutes(item) if departure_minutes(item) is not None else 24 * 60)
+            elif params.sort_by == "price":
+                filtered.sort(key=lambda item: item["amount"] if item["amount"] is not None else float("inf"))
+
+            filtered = filtered[:5]
+            return ToolResult(
+                success=True,
+                message=(
+                    f"Found {len(filtered)} live flight offer(s) from {origin_iata} to {destination_iata}."
+                    if filtered else
+                    f"Duffel returned no flight offers matching the requested route and filters ({origin_iata} to {destination_iata})."
+                ),
+                data={
+                    "type": "flight_list",
+                    "items": filtered,
+                    "live_inventory": True,
+                    "source": "Duffel",
+                    "provider": "duffel",
+                    "offer_request_id": request_resource.get("id"),
+                    "result_count": len(filtered),
+                    "filters_applied": {
+                        **params.model_dump(exclude_none=True),
+                        "origin_iata": origin_iata,
+                        "destination_iata": destination_iata,
+                    },
+                    "origin_airport": origin_airports[0],
+                    "destination_airport": destination_airports[0],
+                    "origin_airport_candidates": origin_airports,
+                    "destination_airport_candidates": destination_airports,
+                },
+                retry_safe=True,
+            )
+        except httpx.HTTPStatusError as exc:
+            status_code = exc.response.status_code
+            return self._external_fallback(
+                params,
+                f"Duffel flight search failed with HTTP {status_code}. No live flight results are available; verify the server-side provider configuration or check an external search.",
+                provider_error=f"HTTP {status_code}",
+            )
+        except (httpx.RequestError, ValueError, TypeError, KeyError) as exc:
+            return self._external_fallback(
+                params,
+                "Duffel flight search is temporarily unavailable. No live flight results are available; use an external search to check current schedules and fares.",
+                provider_error=f"{type(exc).__name__}: {str(exc)[:300]}",
+            )
+
+    def _execute_trvl_cli(
         self,
         ctx: ToolContext,
         params: FlightInput,
@@ -612,6 +884,69 @@ class HotelInput(BaseModel):
     check_out: str = Field(...)
     travellers: int = Field(default=2)
     budget: Optional[float] = Field(default=None)
+
+
+class RefreshFlightOfferInput(BaseModel):
+    offer_id: str = Field(..., min_length=8, max_length=80, pattern=r"^off_[A-Za-z0-9]+$")
+
+
+class RefreshFlightOfferTool(BaseTool):
+    name = "refresh_flight_offer"
+    description = (
+        "Retrieve the latest state and price of a previously returned Duffel flight offer. "
+        "This only refreshes an offer; it does not create a booking or collect payment."
+    )
+    capability = "travel"
+    input_schema = RefreshFlightOfferInput
+    requires_confirmation = False
+    is_mutating = False
+    supported_operations = ("retrieve",)
+
+    def __init__(self):
+        self.provider_adapters = ({"provider_id": "duffel", "display_name": "Duffel"},)
+        if not settings.duffel_api_key.strip():
+            self.execution_status = "requires_auth"
+            self.requires_auth = True
+
+    def execute(self, ctx: ToolContext, params: RefreshFlightOfferInput) -> ToolResult:
+        if not settings.duffel_api_key.strip():
+            return ToolResult(success=False, message="Flight offer refresh requires a Duffel API token configured on the server.")
+        try:
+            with httpx.Client(timeout=httpx.Timeout(25.0)) as client:
+                response = client.get(
+                    f"https://api.duffel.com/air/offers/{params.offer_id}",
+                    headers={
+                        "Authorization": f"Bearer {settings.duffel_api_key.strip()}",
+                        "Accept": "application/json",
+                        "Duffel-Version": "v2",
+                    },
+                )
+                response.raise_for_status()
+                payload = response.json()
+            item = _duffel_offer_to_flight_item(payload.get("data") or {})
+            if not item:
+                return ToolResult(success=False, message="Duffel returned an offer without usable flight segments.")
+            item["refreshed_at"] = datetime.utcnow().isoformat(timespec="seconds") + "Z"
+            return ToolResult(
+                success=True,
+                message=f"Latest flight offer retrieved. Current displayed total: {item['price']}. No booking has been made.",
+                data={
+                    "type": "flight_list",
+                    "items": [item],
+                    "live_inventory": True,
+                    "source": "Duffel",
+                    "provider": "duffel",
+                    "refreshed": True,
+                    "result_count": 1,
+                },
+                retry_safe=True,
+            )
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code == 404:
+                return ToolResult(success=False, message="This flight offer is no longer available. Search again for current options.")
+            return ToolResult(success=False, message=f"Duffel could not refresh this offer (HTTP {exc.response.status_code}).", retry_safe=True)
+        except httpx.RequestError:
+            return ToolResult(success=False, message="Duffel could not be reached to refresh the offer. Please retry.", retry_safe=True)
 
 
 class StayApiHotelTool(BaseTool):
