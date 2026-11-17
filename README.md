@@ -146,7 +146,7 @@ source .venv/bin/activate
 pip install -r requirements.txt
 playwright install chromium
 if [ ! -f .env ]; then cp ../.env.example .env; fi
-# Preserve an existing .env. Keep AGENT_DEMO_MODE=true and localhost-only AGENT_ALLOWED_DOMAINS.
+# Preserve an existing .env. If you just copied the template, set JWT_SECRET to a random local value (generate one with: python -c 'import secrets; print(secrets.token_urlsafe(32))'). Keep AGENT_DEMO_MODE=true and localhost-only AGENT_ALLOWED_DOMAINS.
 uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
 ```
 
