@@ -715,7 +715,18 @@ class UniversalTaskPlanner:
         if decision == "chat":
             return {"decision": "chat", "reply": str(data.get("reply") or "").strip(), "plan": None}
         if decision == "clarification":
-            return self._clarification(str(data.get("reply") or "What detail should I use?").strip())
+            clarification = self._clarification(
+                str(data.get("reply") or "What detail should I use?").strip()
+            )
+            if requires_capability:
+                clarification["structured_data"] = {
+                    "type": "reliability_checkpoint",
+                    "status": "NEEDS_INPUT",
+                    "reason": "This request needs a registered capability; no result has been verified yet.",
+                    "missing_information": [],
+                    "execution_claims_allowed": False,
+                }
+            return clarification
         if decision != "workflow":
             if requires_capability:
                 return self._grounding_checkpoint(
@@ -726,5 +737,13 @@ class UniversalTaskPlanner:
 
         result = self._build_plan(data.get("plan"), manifest)
         if isinstance(result, dict):
+            if requires_capability:
+                result["structured_data"] = {
+                    "type": "reliability_checkpoint",
+                    "status": "NOT_VERIFIED",
+                    "reason": "The proposed action plan did not pass local capability or parameter validation.",
+                    "missing_information": [],
+                    "execution_claims_allowed": False,
+                }
             return result
         return {"decision": "workflow", "reply": None, "plan": result}
