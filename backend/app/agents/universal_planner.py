@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from datetime import date
 from typing import Annotated, Any
 
@@ -132,6 +133,88 @@ class UniversalTaskPlanner:
     @staticmethod
     def _clarification(message: str) -> dict:
         return {"decision": "clarification", "reply": message, "plan": None}
+
+    @staticmethod
+    def requires_registered_capability(message: str) -> bool:
+        """Identify requests where answering as plain chat risks implying work.
+
+        This is a safety boundary, not a tool router: the model still selects
+        capabilities from the live registry and validates the resulting plan.
+        """
+        text = " ".join((message or "").lower().split())
+        action = (
+            r"(?:plan|book|find|search|compare|check|reserve|arrange|cancel|"
+            r"order|track|schedule|locate|recommend|buy|send|submit|apply|"
+            r"pay|contact|call|email|message)"
+        )
+        object_ = (
+            r"(?:trip|travel|itinerary|flight|airfare|train|rail|bus|ticket|"
+            r"hotel|accommodation|stay|restaurant|reservation|ride|cab|taxi|"
+            r"delivery|groceries|appointment|calendar|email|message|invoice|"
+            r"subscription|task|reminder|expense)"
+        )
+        if re.search(rf"\b{action}\b.{{0,120}}\b{object_}\b", text):
+            return True
+        if re.search(rf"\b{object_}\b.{{0,100}}\b{action}\b", text):
+            return True
+        return bool(re.search(
+            r"\b(?:live availability|current price|latest price|real[- ]time|"
+            r"open now|available today|check schedules|current schedule)\b",
+            text,
+        ))
+
+    @classmethod
+    def _grounding_checkpoint(
+        cls,
+        message: str,
+        current_date: date | None = None,
+        reason: str = "This request needs a registered capability and evidence.",
+    ) -> dict:
+        """Fail closed rather than turn a failed tool plan into confident prose."""
+        text = " ".join((message or "").lower().split())
+        travel_request = bool(re.search(
+            r"\b(trip|travel|itinerary|flight|train|rail|bus|hotel|stay|cab|taxi)\b",
+            text,
+        ))
+        has_exact_date = bool(re.search(
+            r"\b(?:20\d{2}-\d{2}-\d{2}|\d{1,2}\s+"
+            r"(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*"
+            r"(?:\s+20\d{2})?)\b",
+            text,
+        ))
+        if travel_request and not has_exact_date:
+            today = current_date or date.today()
+            next_month = date(
+                today.year + (1 if today.month == 12 else 0),
+                1 if today.month == 12 else today.month + 1,
+                1,
+            )
+            reply = (
+                f"I won't invent train schedules, hotel options, opening hours, "
+                f"or prices. To check the journey and stay properly, which exact "
+                f"travel dates should I use in {next_month.strftime('%B %Y')}? "
+                f"There are multiple Friday–Sunday weekends."
+            )
+            missing = ["exact travel dates"]
+        else:
+            reply = (
+                "I don't have verified evidence to claim that this has been "
+                "checked or completed. I need to use a registered capability "
+                "or clarify the missing details before giving you options."
+            )
+            missing = []
+        return {
+            "decision": "clarification",
+            "reply": reply,
+            "plan": None,
+            "structured_data": {
+                "type": "reliability_checkpoint",
+                "status": "NEEDS_INPUT" if missing else "NOT_VERIFIED",
+                "reason": reason,
+                "missing_information": missing,
+                "execution_claims_allowed": False,
+            },
+        }
 
     @staticmethod
     def _compact_schema(schema: Any) -> Any:
@@ -543,8 +626,15 @@ class UniversalTaskPlanner:
         if conversation_context:
             user_input = f"RECENT CONVERSATION:\n{conversation_context}\n\nLATEST USER MESSAGE:\n{user_input}"
 
+        requires_capability = self.requires_registered_capability(user_input)
+
         raw = await self.provider._call(system, user_input, force_json=True)
         if not raw or raw == "LLM_FAILED":
+            if requires_capability:
+                return self._grounding_checkpoint(
+                    user_input, current_date,
+                    reason="The reasoning provider did not return a usable plan.",
+                )
             return {"decision": "unavailable", "reply": None, "plan": None}
 
         data = self._parse_json_object(raw)
@@ -578,9 +668,42 @@ class UniversalTaskPlanner:
 
         if data is None:
             logger.warning("Universal planner JSON repair failed.")
+            if requires_capability:
+                return self._grounding_checkpoint(
+                    user_input, current_date,
+                    reason="The planner could not produce a valid, schema-checkable plan.",
+                )
             return {"decision": "unavailable", "reply": None, "plan": None}
 
         decision = str(data.get("decision", "")).lower()
+        if decision == "chat" and requires_capability:
+            # A plain chat response is not allowed to impersonate a search,
+            # booking, purchase, message or other real-world task.
+            forced_system = (
+                system
+                + "\n\nMANDATORY EXECUTION BOUNDARY: This request requires a "
+                "registered capability. A 'chat' decision is invalid. Return "
+                "'workflow' with a validated plan using the live tools, or "
+                "'clarification' with one essential missing detail. Never write "
+                "search results, prices, availability, schedules, business names "
+                "or completed-action claims from model memory."
+            )
+            forced_raw = await self.provider._call(
+                forced_system,
+                user_input,
+                force_json=True,
+            )
+            forced_data = self._parse_json_object(forced_raw)
+            if not isinstance(forced_data, dict) or str(
+                forced_data.get("decision", "")
+            ).lower() == "chat":
+                return self._grounding_checkpoint(
+                    user_input, current_date,
+                    reason="The planner attempted to answer without using a registered capability.",
+                )
+            data = forced_data
+            decision = str(data.get("decision", "")).lower()
+
         if decision == "chat":
             return {"decision": "chat", "reply": str(data.get("reply") or "").strip(), "plan": None}
         if decision == "clarification":
