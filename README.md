@@ -19,7 +19,10 @@ The product thesis is simple: a useful assistant should not only answer; it shou
 - **Approval checkpoints:** supported consequential tool actions can ask the user for explicit confirmation; tool activity is recorded in action logs.
 - **Personal memory:** users can save, edit, and delete context that may be relevant in later conversations.
 - **Everyday organisation:** tasks, reminders, expense records and summaries.
-- **Travel and food discovery:** itinerary planning and map-listed restaurant candidates. Availability, live prices, menu data, and dietary suitability must not be assumed unless a provider explicitly verifies them.
+- **Goal-driven travel workflows:** flight discovery, airport resolution, travel itineraries, date-aware hotel candidates, and cab handoff links are composed by the universal planner when relevant to the user's goal.
+- **Flight offers:** when `DUFFEL_API_KEY` is configured on the backend, Warik searches Duffel's current flight offers, applies supported passenger, cabin, stop and time-window filters, displays provider prices and operating-carrier details, and can retrieve a refreshed offer by its exact offer ID.
+- **Hotels and ground transport:** hotel search still depends on the optional TRVL CLI provider or an external Booking.com search handoff; Booking.com Demand API is disabled until partner access is configured. Uber and Ola are ride handoff links, not live fare quotes or bookings.
+- **Food discovery:** map-listed restaurant candidates and external Swiggy/Zomato handoffs. Availability, live prices, menu data, and dietary suitability must not be assumed unless a provider explicitly verifies them.
 - **Documents:** upload supported documents and ask questions about their contents.
 - **India-first voice capture:** browser recording, ten speech-language choices, a transcript review/edit step, and an explicit send step. Voice is disabled by default and requires a configured speech provider.
 
@@ -81,6 +84,14 @@ You can use a configured Gnani key instead. Keep provider keys on the backend; n
 
 The current voice UI supports Bengali, English (India), Gujarati, Hindi, Kannada, Malayalam, Marathi, Punjabi, Tamil, and Telugu. Recordings are capped in the UI at 28 seconds; the API also enforces upload-size and duration limits. The transcript is editable and is not sent to the assistant until the user chooses to use it and then submits the chat message.
 
+## Travel provider configuration
+
+Flight search uses the Duffel v2 API when `DUFFEL_API_KEY` is present in `backend/.env`. Keep the token server-side; never put it in a `VITE_` variable or commit it. The key enables live offer search and offer refresh only. Warik does not currently create flight orders, issue tickets, or collect payment.
+
+The flight search also needs the configured geographic providers to resolve a city or airport to verified IATA airport records. If Duffel is not configured, Warik retains the legacy `trvl` CLI path; when neither live path is available, it returns an external search handoff and explicitly marks live inventory as unavailable.
+
+Hotel inventory depends on the optional `trvl` CLI. When unavailable, Warik returns a Booking.com search handoff, not verified hotel inventory. Booking.com Demand API mode remains disabled until the deployment has approved partner credentials. Cab options currently open Uber/Ola with pickup and drop-off details; they do not quote a live fare or book a ride.
+
 ## Tests and build
 
 Backend:
@@ -94,7 +105,7 @@ Frontend:
     npm ci
     npm run build
 
-The speech tests should use mocked providers. Do not use a real provider key in automated tests.
+The speech and travel-provider tests use mocked HTTP responses. CI must not require real Duffel, Gnani, Groq, Booking.com, Uber or Swiggy credentials.
 
 ## Security and release checklist
 
