@@ -365,7 +365,9 @@ def test_prompt_manifest_removes_schema_noise_but_keeps_tool_contract():
     assert "title" in task["input_schema"]["properties"]
     assert "title" in task["input_schema"].get("required", [])
     assert "$schema" not in task["input_schema"]
-    assert task["is_mutating"] is True or task["requires_confirmation"] is True
+    full_task = next(item for item in manifest if item["name"] == "create_task")
+    assert task["is_mutating"] is bool(full_task["is_mutating"])
+    assert task["requires_confirmation"] is bool(full_task["requires_confirmation"])
 
 
 def test_interpret_repairs_invalid_json_once():
@@ -403,3 +405,25 @@ def test_interpret_accepts_json_with_a_short_preamble_and_fence():
 
     assert result == {"decision": "chat", "reply": "Ready.", "plan": None}
     assert len(provider.calls) == 1
+
+
+
+def test_disabled_capability_is_never_executable():
+    planner = _planner()
+    manifest = planner._capability_manifest()
+    task = next(item for item in manifest if item["name"] == "list_tasks")
+    task["execution_status"] = "disabled"
+
+    result = planner._build_plan(
+        {
+            "steps": [{
+                "id": "tasks",
+                "tool": "list_tasks",
+                "params": {},
+            }]
+        },
+        manifest,
+    )
+
+    assert result["decision"] == "clarification"
+    assert "disabled" in result["reply"]
