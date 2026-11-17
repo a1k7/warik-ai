@@ -148,10 +148,10 @@ class UniversalTaskPlanner:
             r"pay|contact|call|email|message)"
         )
         object_ = (
-            r"(?:trip|travel|itinerary|flight|airfare|train|rail|bus|ticket|"
-            r"hotel|accommodation|stay|restaurant|reservation|ride|cab|taxi|"
-            r"delivery|groceries|appointment|calendar|email|message|invoice|"
-            r"subscription|task|reminder|expense)"
+            r"(?:trips?|travel|itineraries|flights?|airfare|trains?|rail|buses?|tickets?|"
+            r"hotels?|accommodation|stays?|restaurants?|reservations?|rides?|cabs?|taxis?|"
+            r"delivery|groceries|appointments?|calendar|emails?|messages?|invoices?|"
+            r"subscriptions?|tasks?|reminders?|expenses?)"
         )
         if re.search(rf"\b{action}\b.{{0,120}}\b{object_}\b", text):
             return True
