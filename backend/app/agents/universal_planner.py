@@ -140,7 +140,7 @@ class UniversalTaskPlanner:
             return {
                 key: UniversalTaskPlanner._compact_schema(value)
                 for key, value in schema.items()
-                if key not in {"$schema", "examples", "default", "deprecated"}
+                if key not in {"$schema", "examples", "deprecated"}
             }
         if isinstance(schema, list):
             return [UniversalTaskPlanner._compact_schema(item) for item in schema]
