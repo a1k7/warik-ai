@@ -278,3 +278,50 @@ def test_optional_step_with_invalid_supplied_value_is_rejected():
     )
 
     assert result["decision"] == "clarification"
+
+
+
+def test_orchestrator_passes_explicit_profile_defaults_as_advisory_context(db_session, monkeypatch):
+    import asyncio
+    from app.agents import orchestrator
+    from app.models import User, UserPreference
+    from app.core.security import hash_password
+
+    user = User(
+        email="profile-context@example.com",
+        name="Profile Context Test",
+        password_hash=hash_password("password123"),
+    )
+    db_session.add(user)
+    db_session.commit()
+    db_session.refresh(user)
+    db_session.add(UserPreference(
+        user_id=user.id,
+        preferred_language="hi-IN",
+        default_currency="INR",
+        timezone="Asia/Kolkata",
+        monthly_budget=25000,
+    ))
+    db_session.commit()
+
+    captured = {}
+
+    async def fake_interpret(self, user_message, conversation_context=""):
+        captured["context"] = conversation_context
+        return {"decision": "chat", "reply": "I can help with that."}
+
+    monkeypatch.setattr(orchestrator.UniversalTaskPlanner, "interpret", fake_interpret)
+    monkeypatch.setattr(orchestrator, "parse_deterministic", lambda _text: None)
+    monkeypatch.setattr(orchestrator, "get_provider", lambda: object())
+
+    response = asyncio.run(
+        orchestrator.handle_message(db_session, user, "Help me plan my monthly spending")
+    )
+
+    assert response.reply == "I can help with that."
+    assert "USER PROFILE DEFAULTS" in captured["context"]
+    assert "hi-IN" in captured["context"]
+    assert "INR" in captured["context"]
+    assert "Asia/Kolkata" in captured["context"]
+    assert "25000" in captured["context"]
+    assert "latest request overrides" in captured["context"]
