@@ -1206,3 +1206,14 @@ button { cursor: pointer; }
   .warik-voice-orb { height:150px;margin:9px 0 0; }
   .warik-voice-orb .orb-lg { width:132px;height:132px; }
 }
+
+
+/* Capability readiness in Settings */
+.capability-list { display:grid;gap:13px; }
+.capability-row { padding-top:13px;border-top:1px solid var(--warik-line); }
+.capability-row:first-child { padding-top:0;border-top:0; }
+.capability-row .integration-description { margin:7px 0 0; }
+.integration-badge.needs-setup { background:#fff3e4;color:#a96822; }
+@media (prefers-color-scheme:dark) {
+  .integration-badge.needs-setup { background:#49321e;color:#efbd82; }
+}
