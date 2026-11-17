@@ -8,7 +8,7 @@ import shutil
 import re
 import math
 
-from urllib.parse import quote_plus, quote
+from urllib.parse import quote_plus, quote, urlparse
 from typing import Optional
 from datetime import datetime
 from typing import Literal
@@ -1114,9 +1114,13 @@ class StayApiHotelTool(BaseTool):
             settings.booking_api_base_url.strip()
             or "https://demandapi.booking.com/3.3"
         ).rstrip("/")
-        if not base_url.startswith("https://") or not (
-            "demandapi.booking.com" in base_url
-            or "demandapi-sandbox.booking.com" in base_url
+        base_host = (urlparse(base_url).hostname or "").lower()
+        if (
+            urlparse(base_url).scheme != "https"
+            or base_host not in {
+                "demandapi.booking.com",
+                "demandapi-sandbox.booking.com",
+            }
         ):
             return ToolResult(
                 success=False,
@@ -1291,13 +1295,14 @@ class StayApiHotelTool(BaseTool):
             currency = str(
                 currency_data.get("booker")
                 or currency_data.get("accommodation")
-                or params.booker_country.upper()
-            ).upper()
+                or ""
+            ).upper().strip()
             try:
                 amount = float(raw_amount)
             except (TypeError, ValueError):
                 continue
-            if amount <= 0:
+            # Never infer a currency from a country code or silently relabel a price.
+            if amount <= 0 or not re.fullmatch(r"[A-Z]{3}", currency):
                 continue
 
             if params.budget is not None and currency == "INR" and amount > params.budget:
@@ -1322,8 +1327,16 @@ class StayApiHotelTool(BaseTool):
             )
 
             booking_url = result.get("url") or detail.get("url")
-            if not isinstance(booking_url, str) or not booking_url.startswith("https://"):
-                booking_url = result.get("deep_link_url") or detail.get("deep_link_url") or ""
+            parsed_booking_url = urlparse(booking_url) if isinstance(booking_url, str) else None
+            if not (
+                parsed_booking_url
+                and parsed_booking_url.scheme == "https"
+                and (
+                    parsed_booking_url.hostname == "booking.com"
+                    or (parsed_booking_url.hostname or "").endswith(".booking.com")
+                )
+            ):
+                booking_url = ""
 
             candidates.append({
                 "name": name,

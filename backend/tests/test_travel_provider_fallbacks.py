@@ -676,7 +676,7 @@ def test_booking_demand_hotel_search_resolves_city_and_maps_live_prices(monkeypa
     assert result.data["items"][0]["total_stay"] == "₹12,000"
     assert result.data["items"][0]["rating"] == 8.7
     assert result.data["items"][0]["booking_url"].startswith("https://www.booking.com/")
-    assert calls[0]["json"]["filters"]["types"] == ["city"] if "filters" in calls[0]["json"] else True
+    assert calls[0]["json"]["filters"]["types"] == ["city"]
     assert calls[0]["headers"]["X-Affiliate-Id"] == "123456"
     assert calls[1]["json"]["city"] == -2140479
     assert calls[1]["json"]["guests"]["number_of_adults"] == 2
