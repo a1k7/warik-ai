@@ -1275,7 +1275,7 @@ def _compact_advisor_outcome(value: dict | None) -> dict:
 
     allowed_scalars = {
         "type", "status", "task_id", "reminder_id", "expense_id",
-        "document_id", "travel_plan_id", "workflow_id", "filename",
+        "document_id", "travel_plan_id", "workflow_id", "filename", "title", "name",
         "page_count", "char_count", "amount", "currency", "category",
         "period", "total", "count", "items_count", "due_at", "remind_at",
         "completed", "saved", "deleted", "retrieved", "source_count",
@@ -1319,11 +1319,11 @@ async def _suggest_contextual_next_step(
     steps: list[dict],
     provider=None,
 ) -> str | None:
-    """Ask the model for one grounded optional follow-up after travel discovery.
+    """Ask the model for one grounded optional follow-up after a workflow.
 
-    This is advisory only: it never executes a tool, creates a booking, or
-    assumes the user wants an add-on. The answer is grounded in compact search
-    evidence and the live registry rather than a fixed flight/cab/hotel chain.
+    This is advisory only: it never executes a tool or assumes the user wants
+    an add-on. The answer is grounded in the goal, compact outcomes and live
+    registry rather than a fixed sequence of steps.
     """
     import json
 
