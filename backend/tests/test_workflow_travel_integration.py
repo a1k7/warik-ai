@@ -275,6 +275,7 @@ def test_trip_summary_preserves_nonempty_flight_filters_but_omits_empty_filters(
 
     assert result.success is True
     assert result.data["flight_searches"] == [{
+        "date": "2026-12-12",
         "live_inventory": True,
         "filters_applied": {
             "date": "2026-12-12",
