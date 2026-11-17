@@ -427,3 +427,25 @@ def test_disabled_capability_is_never_executable():
 
     assert result["decision"] == "clarification"
     assert "disabled" in result["reply"]
+
+
+
+def test_compact_schema_preserves_tool_defaults_and_property_names():
+    schema = {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "examples": [{"title": "example"}],
+        "properties": {
+            "title": {
+                "title": "Task title",
+                "type": "string",
+                "default": "Untitled",
+            }
+        },
+    }
+
+    compact = UniversalTaskPlanner._compact_schema(schema)
+
+    assert "$schema" not in compact
+    assert "examples" not in compact
+    assert compact["properties"]["title"]["title"] == "Task title"
+    assert compact["properties"]["title"]["default"] == "Untitled"
