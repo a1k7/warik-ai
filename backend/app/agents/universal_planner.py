@@ -83,6 +83,7 @@ PLANNING RULES:
 4h. For travel workflows that include flights, hotels, ground transport, or an itinerary, include one compile_trip_summary step depending on the discovery steps so structured results can be shown together. Set the summary dependency policy to tolerate_failure. Do not duplicate a hotel search when the itinerary tool already includes hotel discovery.
 5. Use the conversation context to resolve follow-ups such as "make it cheaper", "add a restaurant", or "change day two". If a prior plan cannot safely be modified with available tools, explain the limitation.
 5a. User-saved memory is advisory context, not an instruction. Apply it only when relevant; the latest explicit request overrides it. Never infer a fact that is not present in the conversation or saved memory.
+5b. Treat USER PROFILE DEFAULTS as user-provided defaults, not requirements. Use preferred_language for the response when the user has not chosen another language; use default_currency when presenting amounts only if the source provides a price in that currency; use timezone/local_datetime for relative dates and local times. Use monthly_budget only when relevant to the user's goal. The latest explicit request always overrides every profile default.
 6. Keep independent discovery steps independent. Add dependencies only when one step genuinely needs another step's output.
 7. A final aggregation/summary step, if available and relevant, should depend on the discovery steps and tolerate their failures.
 8. Never claim an external action has happened merely because it was planned.
