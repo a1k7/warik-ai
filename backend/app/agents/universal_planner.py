@@ -91,7 +91,7 @@ PLANNING RULES:
 7. A final aggregation/summary step, if available and relevant, should depend on the discovery steps and tolerate their failures.
 8. Never claim an external action has happened merely because it was planned.
 9. Any tool marked requires_confirmation or is_mutating must have approval_required=true.
-10. Tools marked unavailable or requires_auth must not be executed. Explain the limitation or ask the user to connect/configure the service.
+10. Tools marked unavailable, disabled, blocked or requires_auth must not be executed. Explain the limitation or ask the user to connect/configure the service.
 11. Use a workflow only when one or more registered tools materially advance the request. General questions, writing, explanations and brainstorming should use chat.
 12. Do not create unnecessary multi-step workflows. A single valid tool step is acceptable.
 13. Keep workflows to at most {max_steps} steps.
@@ -167,6 +167,13 @@ class UniversalTaskPlanner:
                 "execution_status": item.get("execution_status", "available"),
                 "supported_operations": item.get("supported_operations") or [],
                 "supported_regions": item.get("supported_regions") or [],
+                "provider_adapters": [
+                    {
+                        "provider_id": adapter.get("provider_id"),
+                        "display_name": adapter.get("display_name"),
+                    }
+                    for adapter in (item.get("provider_adapters") or [])
+                ],
                 "requires_auth": bool(item.get("requires_auth")),
             })
         return prompt_manifest
@@ -289,9 +296,19 @@ class UniversalTaskPlanner:
                 )
 
             status = str(capability.get("execution_status", "available")).lower()
-            if status in {"unavailable", "requires_auth"}:
-                label = "requires an account connection" if status == "requires_auth" else "is currently unavailable"
-                return self._clarification(f"The '{tool_name}' capability {label}. I won't claim to execute it until it is available.")
+            if status in {"unavailable", "requires_auth", "disabled", "blocked"}:
+                if status == "requires_auth":
+                    label = "requires an account connection"
+                elif status == "disabled":
+                    label = "is disabled in the current configuration"
+                elif status == "blocked":
+                    label = "is blocked by its current execution policy"
+                else:
+                    label = "is currently unavailable"
+                return self._clarification(
+                    f"The '{tool_name}' capability {label}. "
+                    "I won't claim to execute it until it is available."
+                )
 
             params = raw_step.get("params") or {}
             raw_bindings = raw_step.get("input_bindings") or {}
