@@ -130,7 +130,7 @@ class CompileTripSummaryTool(BaseTool):
                         "items": normalized_items,
                     }
                     flight_groups.append(group)
-                    flight_searches.append({
+                    search_metadata = {
                         key: group[key]
                         for key in (
                             "origin", "destination", "date", "source",
@@ -142,7 +142,21 @@ class CompileTripSummaryTool(BaseTool):
                             isinstance(group.get(key), dict)
                             and not group[key]
                         )
-                    })
+                    }
+                    # The departure date is a first-class field on the summary;
+                    # keep filters_applied for time/cabin/stops constraints only.
+                    summary_filters = search_metadata.get("filters_applied")
+                    if isinstance(summary_filters, dict):
+                        summary_filters = {
+                            key: value
+                            for key, value in summary_filters.items()
+                            if key != "date"
+                        }
+                        if summary_filters:
+                            search_metadata["filters_applied"] = summary_filters
+                        else:
+                            search_metadata.pop("filters_applied", None)
+                    flight_searches.append(search_metadata)
 
             # Standalone hotel discovery (backward compatibility)
             elif "hotel" in tool:
