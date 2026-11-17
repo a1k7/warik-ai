@@ -278,7 +278,6 @@ def test_trip_summary_preserves_nonempty_flight_filters_but_omits_empty_filters(
         "date": "2026-12-12",
         "live_inventory": True,
         "filters_applied": {
-            "date": "2026-12-12",
             "arrival_time_to": "10:00",
         },
     }]
