@@ -80,7 +80,10 @@ These are hypotheses. Interview users before choosing a primary segment.
 ## 6. Current product foundation
 
 The advanced workspace branch contains:
-- Conversational tool use and structured workflows.
+- A general conversational path for ordinary questions plus a live-registry, capability-driven workflow planner for supported actions.
+- Multi-step planning with schema validation, dependency/input bindings, optional steps, partial-failure handling, retries, approval gates, and persisted workflow state.
+- Contextual follow-up reasoning after completed workflows: Warik can offer one relevant next step from the user's goal, allowlisted outcome data, and currently registered tools. The suggestion is a question, not an automatic action.
+- User profile defaults for preferred language, currency, timezone, and monthly budget, combined with relevant explicitly saved memories. These are advisory and the latest request always overrides them.
 - User approval checkpoints and action logs.
 - Action Ledger with counterparty, due date, status, and completion note.
 - Personal memory controls.
@@ -107,6 +110,14 @@ Use a refund follow-up as a demonstration of the product loop, without pretendin
 6. The user records the response and outcome; only then can it be marked complete.
 
 This demonstrates memory, structure, user control, and follow-through. Merchant contact and refund verification remain manual until official integrations exist.
+
+### General goal-oriented journeys
+
+Warik should not encode a fixed sequence of add-ons. For a request such as a point-to-point flight search, it should identify the required origin, destination, date and time flexibility, then choose only relevant registered capabilities. It should compare actual returned options when a provider returns structured offers; otherwise it should expose an external search handoff and say that live fares were not retrieved.
+
+After showing options, Warik should ask for a selection before using that selection as an input to another workflow. A later optional step might be ground transport, a hotel, calendar coordination, expense tracking or nothing at all. The decision depends on the user's goal, context, saved preferences, search results and tool availability—not a mandatory flight → cab → hotel template.
+
+The current flight tool can return structured offers only when its configured provider is available. The fallback Google Flights link is a handoff, not a live quote. Uber/Ola links open their apps and do not return a live fare or book a ride. Hotel search depends on the configured provider and returns booking options, not a reservation. A real booking integration must be separately added and must return a confirmed provider booking reference before Warik claims success.
 
 ## 8. Discovery plan
 
