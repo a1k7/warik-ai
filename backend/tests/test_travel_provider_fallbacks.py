@@ -664,7 +664,9 @@ def test_booking_demand_hotel_search_resolves_city_and_maps_live_prices(monkeypa
             check_out="2026-12-12",
             travellers=2,
             budget=15000,
-            country_code="in",
+            country_code="IN",
+            booker_country="IN",
+            booker_currency="inr",
         ),
     )
 
@@ -678,7 +680,9 @@ def test_booking_demand_hotel_search_resolves_city_and_maps_live_prices(monkeypa
     assert result.data["items"][0]["booking_url"].startswith("https://www.booking.com/")
     assert calls[0]["json"]["filters"]["types"] == ["city"]
     assert calls[0]["headers"]["X-Affiliate-Id"] == "123456"
+    assert calls[0]["json"]["country"] == "in"
     assert calls[1]["json"]["city"] == -2140479
     assert calls[1]["json"]["currency"] == "INR"
+    assert calls[1]["json"]["booker"]["country"] == "in"
     assert calls[1]["json"]["guests"]["number_of_adults"] == 2
     assert calls[1]["json"]["guests"]["number_of_rooms"] == 1
