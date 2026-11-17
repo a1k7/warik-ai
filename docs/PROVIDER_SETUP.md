@@ -83,7 +83,23 @@ Use HTTPS, a restricted CORS allow-list, managed secret storage, database backup
 
 The public /api/health checks database connectivity. The authenticated /api/health/capabilities endpoint reports provider configuration, never credential values. Neither endpoint is a live third-party provider health check.
 
-## 8. Release verification
+## 8. Docker deployment
+
+The repository includes a production Compose stack:
+
+    cp .env.production.example .env.production
+    # Edit .env.production: set real database/JWT secrets, HTTPS origins,
+    # hosted LLM credentials, and any optional provider credentials.
+    docker compose --env-file .env.production -f docker-compose.production.yml config
+    docker compose --env-file .env.production -f docker-compose.production.yml up -d --build
+
+The stack starts PostgreSQL with a named persistent volume, waits for its health check before starting FastAPI, and serves the Vite build through Nginx. The frontend and API bind to loopback by default. Put a TLS reverse proxy or managed HTTPS ingress in front of them and forward the public app domain to port 8080 and the API domain to port 8000. Set CORS_ORIGINS to the public frontend origin and VITE_API_BASE_URL to the public API base ending in /api.
+
+The backend creates its current SQLAlchemy tables at startup. This repository does not yet include Alembic migrations; before evolving an already deployed schema, add and test a migration path rather than relying on create_all for schema changes. Back up PostgreSQL before upgrades.
+
+The Compose file is a single-host deployment baseline, not a substitute for managed secrets, TLS termination, monitoring, backups, disaster recovery, or an independent security review. Do not expose PostgreSQL publicly.
+
+## 9. Release verification
 
 After deployment:
 
