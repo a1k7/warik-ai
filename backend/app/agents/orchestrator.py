@@ -1232,6 +1232,11 @@ async def _workflow_response(
 
     steps = workflow.steps_json or []
     status = workflow.status
+    goal = db.get(Goal, workflow.goal_id) if workflow.goal_id else None
+    mission_context = {
+        "goal_title": goal.title if goal else "Personal mission",
+        "goal_description": goal.description if goal else "",
+    }
 
     if exec_result.get("awaiting_approval"):
         step = exec_result["awaiting_approval"]
@@ -1246,6 +1251,7 @@ async def _workflow_response(
                 "workflow_id": workflow.id,
                 "steps": steps,
                 "status": status,
+                **mission_context,
             },
         )
 
@@ -1301,6 +1307,7 @@ async def _workflow_response(
             reply=msg,
             structured_data={
                 **trip_summary,
+                "mission": mission_context,
                 "next_step_question": next_step_question,
                 "outcome_verification": [
                     {"step_id": step.get("id"), **step.get("verification", {})}
@@ -1454,6 +1461,7 @@ async def _workflow_response(
                 "workflow_id": workflow.id,
                 "steps": steps,
                 "status": status,
+                **mission_context,
                 "next_step_question": next_step_question,
                 "outcome_verification": [
                     {"step_id": step.get("id"), **step.get("verification", {})}
@@ -1478,6 +1486,7 @@ async def _workflow_response(
                 "workflow_id": workflow.id,
                 "steps": steps,
                 "status": status,
+                **mission_context,
             },
         )
 
