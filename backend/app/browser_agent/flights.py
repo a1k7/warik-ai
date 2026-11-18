@@ -55,7 +55,7 @@ def requested_date(goal: str, today: date | None = None) -> date:
     if "today" in lowered or "tonight" in lowered:
         return today
     import re
-    match = re.search(r"\\b(20\\d{2}-\\d{2}-\\d{2})\\b", goal)
+    match = re.search(r"\b(20\d{2}-\d{2}-\d{2})\b", goal)
     if match:
         parsed = date.fromisoformat(match.group(1))
         if parsed < today:
