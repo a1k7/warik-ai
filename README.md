@@ -177,3 +177,24 @@ Flight names, fares, and holds are fictional local fixtures. No airline, marketp
 Set `AGENT_DEMO_MODE=false` to try the configured Warik Ollama/Groq planner. Without a reachable provider, keep `AGENT_DEMO_MODE=true`; the deterministic planner still operates the browser using the same task and approval ledger. Configure `AGENT_BROWSER_CDP_URL` only for a trusted CDP endpoint.
 
 The Scheduler and proactive triggers remain future work.
+
+
+## Live flight search with SerpApi
+
+The browser-agent branch can search real Google Flights results through SerpApi. The API key is read only by FastAPI from `backend/.env`; it is never sent to the browser or frontend.
+
+Add `SERPAPI_API_KEY` to `backend/.env`, then set `AGENT_DEMO_MODE=false`. In this mode the runner fails closed if the key is missing or the provider errors; it never silently substitutes the fictional local flight fixtures. The browser displays the normalized provider response and records the provider/search ID and query date in the task ledger.
+
+Supported city aliases include Bengaluru/BLR, Goa/GOI+GOX, Delhi/DEL, Mumbai/BOM, Hyderabad/HYD, Chennai/MAA, Kolkata/CCU, Pune/PNQ, Ahmedabad/AMD, Jaipur/JAI, Kochi/COK, Bhopal/BHO, and additional mapped Indian cities. Departure-time windows are translated to SerpApi's `outbound_times` parameter. Non-stop results are filtered by both the provider's `stops=1` request and a one-segment response check.
+
+**Important:** SerpApi supplies search results and Google Flights result URLs, not a ticket-hold or booking API. In live mode the approval card authorizes opening the provider's results page only. Warik does not claim to book, hold, or pay. A real booking integration requires a separate airline/OTA provider and its own confirmation response.
+
+Use the following local settings:
+
+```dotenv
+SERPAPI_API_KEY=your_private_key
+SERPAPI_TIMEOUT_SECONDS=35
+AGENT_DEMO_MODE=false
+```
+
+Do not commit `backend/.env` or paste the key into chat, source code, screenshots, or frontend environment variables.
