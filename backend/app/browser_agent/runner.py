@@ -265,7 +265,7 @@ async def _run(task_id: int) -> None:
         db.commit()
         await _capture(
             db, task, page,
-            "The next operation is a hold/submit action. I paused and am waiting for your approval.",
+            "I paused before the next user-approved step. I am waiting for your decision.",
             "ask_approval",
             status="waiting_approval",
             details=json.dumps({"approval_id": approval.id, "action": approval.action, "summary": approval.summary}),
@@ -282,14 +282,14 @@ async def _run(task_id: int) -> None:
             approval.status = "denied"
             approval.decided_at = datetime.now(timezone.utc)
             task.status = "denied"
-            task.final_answer = "Approval expired after 10 minutes. The hold action was denied by default; nothing was submitted."
+            task.final_answer = "Approval expired after 10 minutes. The pending action was denied by default; nothing was submitted or booked."
             db.commit()
             await _capture(db, task, page, "The approval window expired. The task stopped safely without submitting.", "approval_timeout", status="denied")
             return
 
         if approval.status != "approved":
             task.status = "denied"
-            task.final_answer = "You denied the hold action. The browser stopped before submitting anything."
+            task.final_answer = "You denied the pending action. The browser stopped without submitting or booking anything."
             db.commit()
             await _capture(db, task, page, "You denied the proposed hold. I stopped before the irreversible step.", "approval_denied", status="denied")
             return
