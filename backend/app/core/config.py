@@ -35,6 +35,10 @@ class Settings(BaseSettings):
     groq_api_key: str = ""
     groq_model: str = "llama-3.3-70b-versatile"
 
+    # SerpApi Google Flights — backend-only API key
+    serpapi_api_key: str = ""
+    serpapi_timeout_seconds: float = Field(default=35.0, gt=0, le=90)
+
     # Browser agent — localhost demo is the safe default.
     agent_demo_mode: bool = True
     agent_browser_cdp_url: str = ""
