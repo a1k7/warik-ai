@@ -184,7 +184,7 @@ export function BrowserAgent() {
         <div className="agent-top-nav">
           <Link className="active" to="/agent">Agent</Link>
           <Link to="/dashboard">Activity <History size={14}/></Link>
-          <span className="agent-live-indicator"><i/> LOCAL SANDBOX</span>
+          <span className="agent-live-indicator"><i/> BROWSER SESSION</span>
         </div>
       </header>
 
@@ -209,7 +209,7 @@ export function BrowserAgent() {
 
           <div className="agent-panel agent-execution">
             <div className="agent-panel-head"><span>02 / LIVE EXECUTION</span><span className={'agent-status status-' + (task?.status || 'idle')}>{task ? statusLabel(task.status) : 'Ready'}</span></div>
-            {!task && <div className="agent-idle"><div><MonitorPlay size={28}/></div><h3>Your browser session will appear here.</h3><p>Start with the sample flight task. The agent will open Chromium, search the local catalogue, compare the results, and request approval.</p></div>}
+            {!task && <div className="agent-idle"><div><MonitorPlay size={28}/></div><h3>Your browser session will appear here.</h3><p>Start with a flight task. The agent will open Chromium, retrieve configured provider data (or clearly labelled demo fixtures), compare results, and request approval.</p></div>}
             {task && <>
               <div className="agent-current-task"><span>TASK #{task.id}</span><strong>{task.goal}</strong></div>
               <div className="agent-timeline">{steps.map((step) => <StepItem key={step.id} step={step}/>)}
@@ -233,7 +233,7 @@ export function BrowserAgent() {
           <div className="agent-panel agent-browser-panel">
             <div className="agent-panel-head"><span>LIVE BROWSER</span><span className="agent-browser-light"><i/> CHROMIUM</span></div>
             {lastShot ? <Screenshot url={lastShot} className="agent-live-shot"/> : <div className="agent-browser-empty"><MonitorPlay size={28}/><span>Waiting for browser activity</span></div>}
-            <div className="agent-browser-caption"><span>LOCAL DEMO WEBSITE</span><a href={(api.defaults.baseURL || 'http://127.0.0.1:8000/api').replace(/\/api\/?$/, '') + '/api/browser-agent/demo-site'} target="_blank" rel="noreferrer">Open site <ExternalLink size={12}/></a></div>
+            <div className="agent-browser-caption"><span>SEARCH PAGE</span><a href={(api.defaults.baseURL || 'http://127.0.0.1:8000/api').replace(/\/api\/?$/, '') + '/api/browser-agent/demo-site'} target="_blank" rel="noreferrer">Open site <ExternalLink size={12}/></a></div>
           </div>
           <div className="agent-panel agent-safety">
             <div className="agent-safety-icon"><ShieldCheck size={20}/></div><div><strong>Human-in-the-loop control</strong><p>Submit, hold, book, pay and send operations are gated. Requests expire to DENY after 10 minutes.</p></div>
@@ -245,7 +245,7 @@ export function BrowserAgent() {
           <Link className="agent-dashboard-link" to="/dashboard"><Activity size={17}/> View task history <ArrowRight size={15}/></Link>
         </aside>
       </div>
-      <footer className="agent-footer"><span>WARIK AI · EXECUTION PREVIEW</span><span>Real browser control · Local demo inventory · No external bookings</span></footer>
+      <footer className="agent-footer"><span>WARIK AI · EXECUTION PREVIEW</span><span>Real browser control · Live provider data when configured · No booking without a booking provider</span></footer>
     </div>
   );
 }
