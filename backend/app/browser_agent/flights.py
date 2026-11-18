@@ -131,14 +131,24 @@ async def search_live_flights(
         params["outbound_times"] = time_range
 
     timeout = httpx.Timeout(settings.serpapi_timeout_seconds, connect=10.0)
-    async with httpx.AsyncClient(timeout=timeout) as client:
-        response = await client.get(SERPAPI_ENDPOINT, params=params)
-        response.raise_for_status()
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            response = await client.get(SERPAPI_ENDPOINT, params=params)
+    except httpx.RequestError as exc:
+        raise RuntimeError(f"SerpApi network request failed ({type(exc).__name__}). Check connectivity and retry.") from None
+    if response.is_error:
+        raise RuntimeError(
+            f"SerpApi returned HTTP {response.status_code}. Check the API key, account quota, and provider status."
+        )
+    try:
         payload = response.json()
+    except ValueError:
+        raise RuntimeError("SerpApi returned a non-JSON response. Check provider status and retry.") from None
 
     metadata = payload.get("search_metadata") or {}
     if metadata.get("status") != "Success":
-        raise RuntimeError(payload.get("error") or f"SerpApi search status: {metadata.get('status', 'unknown')}")
+        provider_error = str(payload.get("error") or f"SerpApi search status: {metadata.get('status', 'unknown')}")
+        raise RuntimeError(provider_error.replace(api_key, "[redacted]")[:300])
 
     candidates = (payload.get("best_flights") or []) + (payload.get("other_flights") or [])
     flights = []
