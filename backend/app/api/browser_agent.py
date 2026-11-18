@@ -81,7 +81,7 @@ button{border:0;border-radius:10px;background:#6e63e8;color:white;font-weight:75
 @media(max-width:780px){form{grid-template-columns:1fr 1fr}.flight-card{grid-template-columns:1fr 1fr}.flight-card button{grid-column:span 2}}
 </style></head><body><main>
 <div class="brand">sky<span>demo</span> <small style="font-size:11px;color:#8792a5;font-weight:600;letter-spacing:1px">LOCAL TEST ENVIRONMENT</small></div>
-<section class="hero"><div class="eyebrow">BROWSER AGENT SANDBOX</div><h1>Find your next flight.</h1><p>Sample inventory for demonstrating browser automation and human approval.</p></section>
+<section class="hero"><div class="eyebrow">BROWSER AGENT SANDBOX</div><h1>Find your next flight.</h1><p>Browser-agent search form. Live mode loads provider results; local fixtures are used only when demo mode is enabled.</p></section>
 <section class="panel"><form id="flight_search">
 <label>FROM<input id="origin" value="Delhi" autocomplete="off"></label>
 <label>TO<input id="destination" value="Mumbai" autocomplete="off"></label>
@@ -89,7 +89,7 @@ button{border:0;border-radius:10px;background:#6e63e8;color:white;font-weight:75
 <label>DEPARTURE<select id="time_window"><option value="morning">Morning</option><option value="afternoon">Afternoon</option><option value="evening" selected>Evening</option><option value="night">Night</option></select></label>
 <button id="search_flights" type="submit">Search flights →</button>
 </form></section><section class="results" id="results" aria-live="polite"></section>
-<div class="note">Demo only · Flights, fares and holds are fictional. No airline, reservation, or payment provider is contacted.</div>
+<div class="note">Local fixture mode only · When AGENT_DEMO_MODE=true, flights, fares and holds are fictional. Live mode uses the configured flight search provider.</div>
 <div id="hold_confirmation" class="ok" aria-live="polite"></div>
 </main><script>
 const inventory=[
