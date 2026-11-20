@@ -182,5 +182,10 @@ export interface Message {
   role: 'user' | 'assistant';
   content: string;
   structured_data?: StructuredData;
+  needs_confirmation?: boolean;
+  confirmation_token?: string;
+  pending_tool?: string;
+  pending_args?: Record<string, unknown>;
+  confirmation_status?: 'pending' | 'processing' | 'approved' | 'declined' | 'failed';
   created_at: string;
 }

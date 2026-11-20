@@ -108,11 +108,21 @@ async def send_message(
         db, user, payload.text, conv, document_id=payload.document_id
     )
 
+    stored_structured_data = dict(agent_response.structured_data or {})
+    if agent_response.needs_confirmation and agent_response.confirmation_token:
+        stored_structured_data["__confirmation"] = {
+            "needs_confirmation": True,
+            "confirmation_token": agent_response.confirmation_token,
+            "pending_tool": agent_response.pending_tool,
+            "pending_args": agent_response.pending_args,
+            "status": "pending",
+        }
+
     assistant_msg = Message(
         conversation_id=conv.id,
         role="assistant",
         content=agent_response.reply,
-        structured_data=agent_response.structured_data,
+        structured_data=stored_structured_data or None,
     )
     db.add(assistant_msg)
     conv.updated_at = datetime.utcnow()
