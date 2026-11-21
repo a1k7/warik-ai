@@ -66,7 +66,8 @@ Return exactly one JSON object with this shape:
 
 PLANNING RULES:
 1. Use only exact tool names in the live capability list. Never invent tools.
-2. Respect each tool's input schema. Supply only supported parameters and correct types.
+2. Treat each registered Pydantic input schema as the exact executable contract. Use the exact property names, types, constraints and descriptions shown in that tool's schema; never substitute a semantically similar parameter name.
+2e. Every step you include must have all required schema inputs, either directly in params or via a required input binding. If a value is unavailable, ask the user; do not omit the step or use placeholders such as "empty", "unknown", "TBD" or "not provided".
 2a. When a later step needs a value produced by an earlier step, use input_bindings rather than guessing or hardcoding that value. Omit the bound target from params.
 2b. Every input binding must reference a source_step listed directly in that step's depends_on. source_path is a dot path relative to the source step's result object; numeric path segments address array indices.
 2c. Set requires_verified=true when a downstream action depends on a prior mutating action having been independently verified. Keep it false for ordinary discovery/search outputs that do not have independent verifiers.
@@ -85,6 +86,8 @@ PLANNING RULES:
 13. Keep workflows to at most {max_steps} steps.
 14. Return JSON only. No markdown fences or commentary.
 15. For requests requiring current web information, latest releases, news, or website research, prefer the registered web_research tool. Use it as a single research step and do not answer from model knowledge alone.
+15a. For substantial research requests, populate the optional web_research "queries" parameter with up to four complementary search angles. Keep the original query focused on the user's actual objective. Use angles such as official documentation, primary sources, current pricing or availability, independent comparisons, limitations, and recent developments when relevant. Do not add irrelevant angles or repeat the original query. For simple factual lookups, an empty queries list is acceptable.
+15b. Generate search angles from the user's request and known context. Never invent facts in order to construct a query. Do not include personal data or sensitive information in search queries unless strictly necessary and explicitly requested.
 16. Do not claim a webpage was retrieved unless the tool reports retrieved=true. If retrieval fails or evidence is missing, disclose that limitation.
 
 """
@@ -156,6 +159,21 @@ class UniversalTaskPlanner:
         return None
 
     @staticmethod
+    def _is_placeholder_value(value: str) -> bool:
+        """Reject generic model sentinels, not domain-specific city names."""
+        normalized = value.strip().casefold()
+        sentinels = {
+            "", "empty", "unknown", "none", "null", "nil", "n/a", "na",
+            "tbd", "to be decided", "to be provided", "not provided",
+            "not specified", "unspecified", "undefined", "-", "?",
+        }
+        return (
+            normalized in sentinels
+            or (normalized.startswith("<") and normalized.endswith(">"))
+            or (normalized.startswith("[") and normalized.endswith("]"))
+        )
+
+    @staticmethod
     def _validate_partial_params(
         tool,
         params: dict,
@@ -171,6 +189,20 @@ class UniversalTaskPlanner:
         unknown = sorted(set(params) - set(fields))
         if unknown:
             raise ValueError(f"unknown parameter(s): {', '.join(unknown)}")
+
+        # Required string inputs must contain an actual value. Pydantic's
+        # min_length alone accepts model sentinels such as "empty".
+        for name, value in params.items():
+            if (
+                name in fields
+                and fields[name].is_required()
+                and isinstance(value, str)
+                and UniversalTaskPlanner._is_placeholder_value(value)
+            ):
+                raise ValueError(
+                    f"required parameter '{name}' contains a placeholder value; "
+                    "please provide an actual value"
+                )
 
         for name, value in params.items():
             field = fields[name]
@@ -270,18 +302,6 @@ class UniversalTaskPlanner:
                         )
                     )
                 ]
-
-                if missing_required and not step_required:
-                    skipped_id = str(raw_step.get("id") or f"step_{index}")
-                    skipped_step_ids.add(skipped_id)
-                    logger.info(
-                        "Skipping optional workflow step %s (%s); "
-                        "missing required inputs: %s",
-                        skipped_id,
-                        tool_name,
-                        ", ".join(sorted(missing_required)),
-                    )
-                    continue
 
                 if missing_required:
                     raise ValueError(

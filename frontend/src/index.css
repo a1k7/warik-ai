@@ -1054,3 +1054,14 @@ button { cursor: pointer; }
     align-items: flex-start;
   }
 }
+
+
+/* Account Hub — connected personal context providers */
+.account-hub-divider { height: 1px; margin: 25px 0 4px; background: var(--warik-line); }
+.gmail-context-results { display: grid; gap: 9px; margin-top: 18px; }
+.gmail-context-heading { color: var(--warik-muted); font-size: 9px; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; }
+.gmail-context-item { display: grid; gap: 5px; padding: 12px; border: 1px solid var(--warik-line); border-radius: 11px; background: var(--warik-bg); }
+.gmail-context-meta { display: flex; justify-content: space-between; gap: 10px; color: var(--warik-muted); font-size: 9px; text-transform: capitalize; }
+.gmail-context-item strong { color: var(--warik-ink); font-size: 11px; overflow-wrap: anywhere; }
+.gmail-context-item small,.gmail-context-item p { margin: 0; color: var(--warik-muted); font-size: 9px; overflow-wrap: anywhere; }
+.gmail-context-item p { line-height: 1.55; }

@@ -215,7 +215,7 @@ class ProviderSelector:
 
                 requires_auth = bool(
                     getattr(tool, "requires_auth", False)
-                ) or status == "requires_auth"
+                ) or bool(adapter.get("requires_auth", False)) or status == "requires_auth"
 
                 if requires_auth and provider_id not in authenticated:
                     reject("Provider authentication is required.")

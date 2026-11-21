@@ -8,8 +8,25 @@ def _context():
     return SimpleNamespace(db=None, user=None)
 
 
+class FakeGeocoder:
+    def search(self, location, *, limit=5):
+        return [{
+            "name": "Delhi",
+            "lat": 28.6139,
+            "lon": 77.2090,
+            "country": "India",
+            "state": "Delhi",
+            "type": "administrative",
+        }]
+
+
+def _mock_geocoder(monkeypatch):
+    monkeypatch.setattr(food_tools, "geocoder", lambda: FakeGeocoder())
+
+
+
 def test_food_discovery_uses_openstreetmap_without_geoapify_key(monkeypatch):
-    monkeypatch.setattr(food_tools.settings, "geoapify_api_key", "")
+    _mock_geocoder(monkeypatch)
 
     class Provider:
         def search(self, location, *, kind, limit, radius_m):
@@ -34,7 +51,7 @@ def test_food_discovery_uses_openstreetmap_without_geoapify_key(monkeypatch):
     )
 
     assert result.success
-    assert "OpenStreetMap-listed" in result.message
+    assert "OpenStreetMap-listed candidates" in result.message
     assert result.data["items"][0]["name"] == "Test Restaurant"
     assert result.data["items"][0]["source"] == "OpenStreetMap"
     assert result.data["items"][0]["maps_url"].startswith(
@@ -43,7 +60,7 @@ def test_food_discovery_uses_openstreetmap_without_geoapify_key(monkeypatch):
 
 
 def test_food_discovery_returns_graceful_error_when_overpass_fails(monkeypatch):
-    monkeypatch.setattr(food_tools.settings, "geoapify_api_key", "")
+    _mock_geocoder(monkeypatch)
 
     class Provider:
         def search(self, *args, **kwargs):
@@ -63,6 +80,7 @@ def test_food_discovery_returns_graceful_error_when_overpass_fails(monkeypatch):
 
 
 def test_food_discovery_reports_empty_openstreetmap_results(monkeypatch):
+    _mock_geocoder(monkeypatch)
     class Provider:
         def search(self, *args, **kwargs):
             return []

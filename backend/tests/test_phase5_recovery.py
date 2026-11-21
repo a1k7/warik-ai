@@ -3,6 +3,7 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 from app.agents.workflow_engine import WorkflowEngine
+from .schema_fixtures import find_schema_tool, valid_required_tool_params
 
 
 def _engine_workflow(step):
@@ -89,10 +90,21 @@ def test_completed_step_is_not_reexecuted_on_resume():
 
 
 def test_uncertain_mutating_failure_requires_reconciliation_before_retry():
+    from types import SimpleNamespace
+
+    schema_tool = find_schema_tool()
+    mutating_tool = SimpleNamespace(
+        name="fixture_mutating_tool",
+        is_mutating=True,
+        requires_confirmation=False,
+        provider_adapters=(),
+        input_schema=schema_tool.input_schema,
+    )
+
     engine, workflow, _ = _engine_workflow({
         "id": "mutate",
-        "tool": "mutating_tool",
-        "params": {},
+        "tool": mutating_tool.name,
+        "params": valid_required_tool_params(schema_tool),
         "depends_on": [],
         "status": "APPROVED",
         "approval_required": True,
@@ -101,22 +113,20 @@ def test_uncertain_mutating_failure_requires_reconciliation_before_retry():
         "max_retries": 2,
         "retry_count": 0,
     })
-    mutating_tool = SimpleNamespace(
-        is_mutating=True,
-        requires_confirmation=False,
-    )
+    engine._select_step_provider = lambda *_args, **_kwargs: (None, None)
 
-    with patch("app.agents.workflow_engine.registry.get", return_value=mutating_tool), \
-         patch.object(engine, "_invoke_tool", return_value={
-             "success": False,
-             "error": "connection lost after request",
-             "data": None,
-         }):
-        result = engine.execute(workflow)
+    with patch("app.agents.workflow_engine.registry.get", return_value=mutating_tool):
+        with patch.object(engine, "_invoke_tool", return_value={
+            "success": False,
+            "error": "connection lost after request",
+            "data": None,
+        }):
+            result = engine.execute(workflow)
 
-    step = workflow.steps_json[0]
-    assert step["status"] == "RECONCILIATION_REQUIRED"
-    assert result["reconciliation_required_steps"] == ["mutate"]
-    retry = engine.retry_step(workflow, "mutate")
-    assert retry["ok"] is False
-    assert "reconcile" in retry["reason"].lower()
+        step = workflow.steps_json[0]
+        assert step["status"] == "RECONCILIATION_REQUIRED"
+        assert result["reconciliation_required_steps"] == ["mutate"]
+
+        retry = engine.retry_step(workflow, "mutate")
+        assert retry["ok"] is False
+        assert "reconcile" in retry["reason"].lower()

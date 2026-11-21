@@ -24,3 +24,7 @@ __all__ = [
 from app.models.swiggy_connection import SwiggyConnection, SwiggyOAuthTransaction
 
 __all__ += ["SwiggyConnection", "SwiggyOAuthTransaction"]
+
+from app.models.gmail_connection import GmailConnection, GmailOAuthTransaction
+
+__all__ += ["GmailConnection", "GmailOAuthTransaction"]

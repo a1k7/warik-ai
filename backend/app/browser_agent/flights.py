@@ -35,9 +35,11 @@ TIME_RANGES = {
 
 def airport_ids(city: str) -> str:
     value = city.strip()
+    code = CITY_CODES.get(value.casefold())
+    if code:
+        return code
     if len(value) == 3 and value.isalpha():
         return value.upper()
-    code = CITY_CODES.get(value.casefold())
     if not code:
         raise ValueError(
             f"I don't have an airport mapping for '{city}'. Use a major city name or a 3-letter IATA code."

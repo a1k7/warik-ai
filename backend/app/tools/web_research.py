@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import ipaddress
+import re
 import socket
+from datetime import datetime, timezone
 from urllib.parse import urljoin, urlparse
 
 import requests
@@ -16,7 +18,8 @@ from app.tools.base import BaseTool, ToolContext, ToolResult
 
 class WebResearchInput(BaseModel):
     query: str = Field(..., min_length=3, max_length=500)
-    max_pages: int = Field(default=3, ge=1, le=5)
+    max_pages: int = Field(default=5, ge=1, le=8)
+    queries: list[str] = Field(default_factory=list, max_length=4)
 
 
 class WebResearchTool(BaseTool):
@@ -134,6 +137,7 @@ class WebResearchTool(BaseTool):
                 return {
                     "retrieved": True,
                     "url": response.url,
+                    "retrieved_at": datetime.now(timezone.utc).isoformat(),
                     "title": title[:300],
                     "content": text[:self.MAX_TEXT_CHARS],
                     "truncated": len(text) > self.MAX_TEXT_CHARS,
@@ -144,67 +148,199 @@ class WebResearchTool(BaseTool):
 
         raise ValueError("Too many webpage redirects.")
 
+    @staticmethod
+    def _tokens(value: str) -> set[str]:
+        stopwords = {
+            "the", "a", "an", "and", "or", "but", "for", "to", "of",
+            "in", "on", "at", "by", "with", "from", "is", "are", "was",
+            "were", "what", "when", "where", "who", "why", "how", "which",
+            "about", "please", "find", "search", "latest", "best",
+        }
+        words = re.findall(r"[a-z0-9]+", (value or "").lower())
+        return {word for word in words if len(word) > 1 and word not in stopwords}
+
+    @classmethod
+    def _relevance_score(cls, query: str, result: dict) -> float:
+        query_tokens = cls._tokens(query)
+        if not query_tokens:
+            return 0.0
+
+        title_tokens = cls._tokens(result.get("title", ""))
+        snippet_tokens = cls._tokens(result.get("body", ""))
+
+        title_matches = len(query_tokens & title_tokens)
+        snippet_matches = len(query_tokens & snippet_tokens)
+        coverage = len(query_tokens & (title_tokens | snippet_tokens)) / len(query_tokens)
+
+        title_ratio = title_matches / len(query_tokens)
+        snippet_ratio = snippet_matches / len(query_tokens)
+
+        phrase = " ".join(query.lower().split())
+        title = (result.get("title") or "").lower()
+        snippet = (result.get("body") or "").lower()
+        phrase_bonus = 0.5 if phrase and (phrase in title or phrase in snippet) else 0.0
+
+        return round(
+            (title_ratio * 3.0) + snippet_ratio + coverage + phrase_bonus,
+            4,
+        )
+
+    @staticmethod
+    def _canonical_url(url: str) -> str:
+        parsed = urlparse(url)
+        return parsed._replace(fragment="").geturl().rstrip("/").lower()
+
+    @staticmethod
+    def _source_category(url: str) -> str:
+        """Describe observable domain characteristics, not source trust."""
+        parsed = urlparse(url)
+        host = (parsed.hostname or "").lower()
+        path = (parsed.path or "").lower()
+
+        if host.endswith(".gov") or ".gov." in host:
+            return "government_domain"
+        if host.endswith(".edu") or ".edu." in host:
+            return "educational_domain"
+        if any(token in path for token in ("/docs", "/documentation", "/reference")):
+            return "documentation_path"
+        return "general_web"
+
     def execute(self, ctx: ToolContext, params: WebResearchInput) -> ToolResult:
         try:
-            search_results = DDGS().text(
-                params.query,
-                max_results=max(params.max_pages * 2, 5),
+            # The original request always remains the primary ranking objective.
+            search_queries = [params.query]
+            for query in params.queries:
+                cleaned = query.strip()
+                if cleaned and cleaned.casefold() not in {
+                    item.casefold() for item in search_queries
+                }:
+                    search_queries.append(cleaned)
+
+            # Bound search fan-out to control latency and provider load.
+            search_queries = search_queries[:5]
+            candidate_limit = min(max(params.max_pages * 8, 16), 40)
+
+            candidates_by_url = {}
+            query_errors = []
+
+            for search_query in search_queries:
+                try:
+                    results = list(
+                        DDGS().text(search_query, max_results=candidate_limit) or []
+                    )
+                except Exception as exc:
+                    query_errors.append({
+                        "query": search_query,
+                        "error": f"{type(exc).__name__}: {str(exc)[:200]}",
+                    })
+                    continue
+
+                for result in results:
+                    url = result.get("href")
+                    if not url:
+                        continue
+
+                    try:
+                        canonical = self._canonical_url(url)
+                    except Exception:
+                        continue
+
+                    if not canonical:
+                        continue
+
+                    score = self._relevance_score(params.query, result)
+                    existing = candidates_by_url.get(canonical)
+
+                    if existing is None:
+                        candidates_by_url[canonical] = {
+                            "title": result.get("title") or "",
+                            "search_snippet": result.get("body") or "",
+                            "search_url": url,
+                            "canonical_url": canonical,
+                            "relevance_score": score,
+                            "matched_queries": [search_query],
+                        }
+                    else:
+                        if search_query not in existing["matched_queries"]:
+                            existing["matched_queries"].append(search_query)
+
+                        if score > existing["relevance_score"]:
+                            existing["title"] = result.get("title") or existing["title"]
+                            existing["search_snippet"] = (
+                                result.get("body") or existing["search_snippet"]
+                            )
+                            existing["search_url"] = url
+                            existing["relevance_score"] = score
+
+            candidates = list(candidates_by_url.values())
+            candidates.sort(
+                key=lambda item: (
+                    item["relevance_score"],
+                    len(item["matched_queries"]),
+                ),
+                reverse=True,
             )
 
-            if not search_results:
+            if not candidates:
                 return ToolResult(
-                    success=True,
-                    message="Search completed but returned no results.",
+                    success=bool(query_errors) is False,
+                    message=(
+                        "All web searches failed."
+                        if query_errors
+                        else "Search completed but returned no usable results."
+                    ),
                     data={
                         "type": "web_research",
                         "query": params.query,
-                        "search_status": "no_results",
+                        "search_queries": search_queries,
+                        "search_status": "failed" if query_errors else "no_results",
+                        "query_errors": query_errors,
+                        "candidate_count": 0,
+                        "retrieved_count": 0,
                         "sources": [],
                     },
                 )
 
             sources = []
-            seen_urls = set()
-
-            for result in search_results:
-                url = result.get("href")
-                if not url or url in seen_urls:
-                    continue
-
-                seen_urls.add(url)
-
+            for rank, candidate in enumerate(candidates[:params.max_pages], start=1):
                 source = {
-                    "title": result.get("title") or "",
-                    "search_snippet": result.get("body") or "",
-                    "search_url": url,
+                    **candidate,
+                    "rank": rank,
+                    "domain": urlparse(candidate["search_url"]).hostname,
+                    "source_category": self._source_category(candidate["search_url"]),
                     "retrieved": False,
                 }
 
-                if len(sources) < params.max_pages:
-                    try:
-                        fetched = self._fetch_page(url)
-                        source.update(fetched)
-                    except Exception as exc:
-                        source["retrieval_error"] = str(exc)
+                try:
+                    fetched = self._fetch_page(candidate["search_url"])
+                    source.update(fetched)
+                except Exception as exc:
+                    source["retrieval_error"] = (
+                        f"{type(exc).__name__}: {str(exc)[:300]}"
+                    )
 
                 sources.append(source)
 
-                if len(sources) >= params.max_pages:
-                    break
-
-            retrieved_count = sum(1 for item in sources if item.get("retrieved"))
+            retrieved_count = sum(
+                1 for item in sources
+                if item.get("retrieved") is True and item.get("content")
+            )
 
             return ToolResult(
                 success=True,
                 message=(
-                    f"Found {len(sources)} sources; "
-                    f"successfully retrieved {retrieved_count} webpages."
+                    f"Searched {len(search_queries)} query angles; "
+                    f"ranked {len(candidates)} unique candidates and "
+                    f"retrieved {retrieved_count} of {len(sources)} selected pages."
                 ),
                 data={
                     "type": "web_research",
                     "query": params.query,
+                    "search_queries": search_queries,
                     "search_status": "completed",
-                    "source_count": len(sources),
+                    "query_errors": query_errors,
+                    "candidate_count": len(candidates),
+                    "selected_count": len(sources),
                     "retrieved_count": retrieved_count,
                     "sources": sources,
                 },
@@ -213,7 +349,7 @@ class WebResearchTool(BaseTool):
         except Exception as exc:
             return ToolResult(
                 success=False,
-                message=f"Web research failed: {type(exc).__name__}: {exc}",
+                message=f"Web research failed: {type(exc).__name__}: {str(exc)[:300]}",
                 data={
                     "type": "web_research",
                     "query": params.query,

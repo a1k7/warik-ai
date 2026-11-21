@@ -30,6 +30,7 @@ from app.models.action_log import ActionLog
 from app.schemas.workflow import WorkflowPlan
 
 from app.tools.base import BaseTool, ToolContext, ToolResult
+from app.tools.input_validation import validate_tool_input
 
 from app.tools.registry import registry
 from app.tools.provider_selector import ProviderSelector
@@ -109,10 +110,22 @@ class WorkflowEngine:
                 )
             operation = operations[0]
 
+        authenticated_providers = []
+        try:
+            from app.core.config import settings
+            if str(getattr(settings, "stayapi_key", "") or "").strip():
+                authenticated_providers.append("stayapi_booking")
+            if str(getattr(settings, "serpapi_api_key", "") or "").strip():
+                authenticated_providers.append("serpapi_google_flights")
+        except Exception:
+            # Missing configuration makes authenticated adapters ineligible.
+            authenticated_providers = []
+
         selection = self.provider_selector.select(
             capability=getattr(tool, "capability", "general"),
             operation=operation,
             region=step.get("provider_region"),
+            authenticated_providers=authenticated_providers,
             tool_name=tool.name,
         )
         if not selection.available:
@@ -658,22 +671,21 @@ class WorkflowEngine:
             validated_params = None
             if tool is not None:
                 try:
-                    validated_params = tool.input_schema(**params)
+                    # Validate after dependency bindings are resolved. No
+                    # approval or external execution may precede this check.
+                    validated_params = validate_tool_input(tool, params)
                     if hasattr(validated_params, "model_dump"):
                         params = validated_params.model_dump(mode="json")
                 except Exception as exc:
-                    if next_step.get("input_bindings"):
-                        next_step["status"] = "FAILED"
-                        next_step["error"] = (
-                            "Resolved input validation failed: "
-                            f"{str(exc)[:700]}"
-                        )
-                        new_failures.append(next_step)
-                        self._save(workflow, steps)
-                        self.db.commit()
-                        continue
-                    # Legacy/non-bound plans retain dispatch-time validation.
-                    validated_params = None
+                    next_step["status"] = "FAILED"
+                    next_step["error"] = (
+                        "Input validation failed before execution: "
+                        f"{str(exc)[:700]}"
+                    )
+                    new_failures.append(next_step)
+                    self._save(workflow, steps)
+                    self.db.commit()
+                    continue
 
             # Resolve provider before approval so the exact provider is approved.
             selection = None
@@ -873,6 +885,29 @@ class WorkflowEngine:
             if result.get("success"):
                 next_step["status"] = "COMPLETED"
                 next_step["result"] = result.get("data")
+                if result.get("success") and isinstance(result.get("data"), dict):
+                    try:
+                        from app.services.context.travel_artifacts import (
+                            capture_workflow_tool_result,
+                        )
+                        capture_workflow_tool_result(
+                            db=self.db,
+                            workflow=workflow,
+                            tool_name=str(next_step.get("tool") or ""),
+                            params=params if isinstance(params, dict) else {},
+                            result_data=result.get("data") or {},
+                            selected_provider_id=(
+                                selected_provider.provider_id
+                                if selected_provider is not None
+                                else None
+                            ),
+                        )
+                    except Exception:
+                        logger.exception(
+                            "Travel evidence capture failed for workflow %s step %s",
+                            workflow.id,
+                            next_step.get("id"),
+                        )
                 next_step["error"] = None
                 verification = self._verify_tool_result(
                     next_step, params, result, workflow_id=workflow.id

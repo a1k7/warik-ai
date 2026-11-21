@@ -148,18 +148,12 @@ def test_orchestrator_uses_universal_planner_for_unmatched_request(db_session, m
     assert response.structured_data["status"] == "COMPLETED"
 
 
-def test_optional_step_with_missing_parameters_is_skipped():
+def test_optional_step_with_missing_required_parameters_requests_clarification():
     planner = _planner()
-
     result = planner._build_plan(
         {
             "steps": [
-                {
-                    "id": "source",
-                    "tool": "list_tasks",
-                    "params": {},
-                    "required": True,
-                },
+                {"id": "source", "tool": "list_tasks", "params": {}, "required": True},
                 {
                     "id": "optional_task",
                     "tool": "create_task",
@@ -171,23 +165,17 @@ def test_optional_step_with_missing_parameters_is_skipped():
         },
         planner._capability_manifest(),
     )
+    assert isinstance(result, dict)
+    assert result["decision"] == "clarification"
+    assert "title" in result["reply"]
 
-    assert not isinstance(result, dict)
-    assert [step.id for step in result.steps] == ["source"]
 
-
-def test_optional_step_with_missing_bound_input_is_skipped():
+def test_optional_step_with_missing_required_bound_input_requests_clarification():
     planner = _planner()
-
     result = planner._build_plan(
         {
             "steps": [
-                {
-                    "id": "source",
-                    "tool": "list_tasks",
-                    "params": {},
-                    "required": True,
-                },
+                {"id": "source", "tool": "list_tasks", "params": {}, "required": True},
                 {
                     "id": "optional_task",
                     "tool": "create_task",
@@ -206,21 +194,20 @@ def test_optional_step_with_missing_bound_input_is_skipped():
         },
         planner._capability_manifest(),
     )
+    assert isinstance(result, dict)
+    assert result["decision"] == "clarification"
+    assert "title" in result["reply"]
 
-    assert not isinstance(result, dict)
-    assert [step.id for step in result.steps] == ["source"]
 
-
-def test_required_step_depending_on_skipped_optional_step_requests_clarification():
+def test_optional_enrichment_with_valid_schema_inputs_can_be_planned():
     planner = _planner()
-
     result = planner._build_plan(
         {
             "steps": [
                 {
                     "id": "optional_task",
                     "tool": "create_task",
-                    "params": {},
+                    "params": {"title": "Prepare project notes"},
                     "required": False,
                 },
                 {
@@ -234,9 +221,8 @@ def test_required_step_depending_on_skipped_optional_step_requests_clarification
         },
         planner._capability_manifest(),
     )
-
-    assert result["decision"] == "clarification"
-    assert "depends" in result["reply"]
+    assert not isinstance(result, dict)
+    assert [step.id for step in result.steps] == ["optional_task", "dependent"]
 
 
 def test_optional_step_with_unknown_parameter_is_rejected():

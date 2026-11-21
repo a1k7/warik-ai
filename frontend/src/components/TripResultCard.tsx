@@ -13,15 +13,29 @@ import {
   Image as ImageIcon,
 } from 'lucide-react';
 import { useState } from 'react';
+import { HotelResults } from './HotelResults';
+import { FlightResults } from './FlightResults';
+
+function getStayNights(checkIn?: string | null, checkOut?: string | null): number | undefined {
+  if (!checkIn || !checkOut) return undefined;
+  const start = Date.parse(`${checkIn}T00:00:00Z`);
+  const end = Date.parse(`${checkOut}T00:00:00Z`);
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) return undefined;
+  return Math.round((end - start) / 86_400_000);
+}
+
 
 interface TripData {
-  type: 'trip_summary';
-  destination: string;
-  flights: any[];
-  hotels: any[];
-  cabs: any;
-  itinerary: any;
-  failures: any[];
+  type: 'trip_summary' | 'advanced_itinerary';
+  destination?: string;
+  flights?: any[];
+  hotels?: any[];
+  cabs?: Record<string, any>;
+  itinerary?: any;
+  days?: any[];
+  budget?: any;
+  travellers?: number;
+  failures?: any[];
 }
 
 function HotelImage({ src, name }: { src?: string; name: string }) {
@@ -167,8 +181,19 @@ function ActivityGroup({
 export const TripResultCard = ({ data }: { data: TripData }) => {
   if (!data) return null;
 
-  const hotels = data.hotels || [];
-  const days = data.itinerary?.days || [];
+  // Normalize both supported itinerary response formats.
+  const itinerary =
+    data.type === 'advanced_itinerary'
+      ? data
+      : data.itinerary;
+
+  const hotels = Array.isArray(data.hotels) ? data.hotels : [];
+  const days = Array.isArray(itinerary?.days)
+    ? itinerary.days
+    : [];
+
+  const budget = itinerary?.budget ?? data.budget;
+  const travellers = itinerary?.travellers ?? data.travellers;
 
   const displayTitle =
     !data.destination || data.destination === 'Your Trip'
@@ -207,12 +232,12 @@ export const TripResultCard = ({ data }: { data: TripData }) => {
           </div>
 
           <div className="flex flex-wrap gap-4 mt-7 pt-5 border-t border-white/15">
-            {data.itinerary?.travellers && (
+            {travellers && (
               <div className="text-xs text-[#F3DCE1]">
                 <span className="block text-[9px] uppercase tracking-widest text-[#D6A8B3] mb-1">
                   Travellers
                 </span>
-                {data.itinerary.travellers} people
+                {travellers} people
               </div>
             )}
             {days.length > 0 && (
@@ -234,6 +259,105 @@ export const TripResultCard = ({ data }: { data: TripData }) => {
           </div>
         </div>
       </section>
+
+      {/* BUDGET TRANSPARENCY */}
+      {budget && (
+        <section className="rounded-[22px] border border-[#702D3C]/40 bg-[#30252A] p-5 sm:p-6 shadow-lg">
+          <div className="flex items-center justify-between gap-3 mb-4">
+            <div>
+              <p className="text-[10px] uppercase tracking-[0.2em] text-[#D6A8B3] font-bold">
+                Trip finances
+              </p>
+              <h3 className="text-xl font-semibold mt-1">
+                Budget breakdown
+              </h3>
+            </div>
+
+            <span className="text-[10px] uppercase tracking-wider rounded-full border border-amber-400/30 bg-amber-400/10 px-3 py-2 text-amber-200">
+              {budget.is_partial ? 'Partial' : 'Budget status'}
+            </span>
+          </div>
+
+          <div className="rounded-xl bg-[#1A1417] border border-white/[0.07] p-4 mb-4">
+            <p className="text-[10px] uppercase tracking-wider text-[#A98D98]">
+              Total trip estimate
+            </p>
+
+            <p className="text-2xl font-semibold mt-1">
+              {typeof budget.total_estimate === 'number' &&
+              Number.isFinite(budget.total_estimate)
+                ? `${budget.items?.[0]?.currency || 'INR'} ${budget.total_estimate.toLocaleString()}`
+                : 'Not available'}
+            </p>
+
+            <p className="text-xs text-[#BCA7AF] mt-2">
+              {budget.is_partial
+                ? 'A complete estimate cannot be calculated from the currently available price evidence.'
+                : 'Based on the available budget information.'}
+            </p>
+
+            {typeof budget.user_budget === 'number' &&
+              Number.isFinite(budget.user_budget) && (
+                <p className="text-xs text-[#D6A8B3] mt-3">
+                  Your budget: {budget.user_budget.toLocaleString()}
+                </p>
+              )}
+          </div>
+
+          <div className="flex flex-col gap-3">
+            {(Array.isArray(budget.items) ? budget.items : []).map(
+              (item: any, index: number) => {
+                const hasAmount =
+                  typeof item.amount === 'number' &&
+                  Number.isFinite(item.amount);
+
+                return (
+                  <div
+                    key={`${item.category}-${index}`}
+                    className="flex justify-between items-start gap-4 border-b border-white/[0.06] pb-3 last:border-0"
+                  >
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium text-[#FAF7F3]">
+                        {item.category}
+                      </p>
+
+                      <p className="text-[10px] text-[#BCA7AF] mt-1">
+                        {item.classification === 'VERIFIED_QUOTE'
+                          ? 'Verified quote'
+                          : item.classification === 'USER_PROVIDED'
+                            ? 'User provided'
+                            : item.classification === 'ESTIMATE'
+                              ? 'Estimate'
+                              : 'Unavailable'}
+                      </p>
+
+                      {item.note && (
+                        <p className="text-xs text-[#BCA7AF]/80 mt-1">
+                          {item.note}
+                        </p>
+                      )}
+                    </div>
+
+                    <p className="text-sm font-semibold text-right shrink-0">
+                      {hasAmount
+                        ? `${item.currency || 'INR'} ${item.amount.toLocaleString()}`
+                        : 'Unavailable'}
+                    </p>
+                  </div>
+                );
+              }
+            )}
+          </div>
+
+          {Array.isArray(budget.excludes) && budget.excludes.length > 0 && (
+            <p className="text-xs text-[#BCA7AF] mt-4 pt-3 border-t border-white/[0.07]">
+              Costs not included in a complete estimate: {
+                budget.excludes.join(', ')
+              }.
+            </p>
+          )}
+        </section>
+      )}
 
       {/* ITINERARY */}
       {days.length > 0 && (
@@ -301,146 +425,34 @@ export const TripResultCard = ({ data }: { data: TripData }) => {
         </section>
       )}
 
-      {/* HOTELS */}
+      {/* HOTELS — reuse the premium standalone hotel comparison cards */}
       {hotels.length > 0 && (
-        <section className="rounded-[22px] border border-[#702D3C]/40 bg-[#30252A] p-5 sm:p-6 shadow-lg">
-          <div className="mb-5">
-            <div className="flex items-center gap-2 text-[#D6A8B3] text-[10px] uppercase tracking-[0.2em] font-bold">
-              <Building2 size={14} /> Handpicked stays
-            </div>
-            <h3 className="text-xl font-semibold mt-1">Places to stay</h3>
-            <p className="text-xs text-[#BCA7AF] mt-1">
-              Compare available properties and booking options.
-            </p>
-          </div>
-
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            {hotels.map((hotel: any, index: number) => (
-              <article
-                key={`${hotel.name}-${index}`}
-                className="group overflow-hidden rounded-2xl border border-white/[0.08] bg-[#1A1417] hover:border-[#C99AA4]/40 transition-all duration-300"
-              >
-                <div className="overflow-hidden">
-                  <HotelImage src={hotel.image_url} name={hotel.name} />
-                </div>
-
-                <div className="p-4">
-                  <div className="flex justify-between items-start gap-3">
-                    <div className="min-w-0">
-                      <h4 className="font-semibold text-[#FAF7F3] leading-snug">
-                        {hotel.name}
-                      </h4>
-                      {(hotel.city || hotel.address) && (
-                        <p className="flex items-start gap-1.5 text-xs text-[#BCA7AF] mt-2">
-                          <MapPin size={12} className="mt-0.5 shrink-0" />
-                          {hotel.city || hotel.address}
-                        </p>
-                      )}
-                    </div>
-
-                    {hotel.rating && hotel.rating !== 'Not provided' && (
-                      <span className="shrink-0 rounded-lg bg-[#B88A4A]/15 border border-[#B88A4A]/20 px-2 py-1 text-xs text-[#E6C58D]">
-                        ★ {hotel.rating}
-                      </span>
-                    )}
-                  </div>
-
-                  <div className="mt-4 grid grid-cols-2 gap-3 border-t border-white/[0.07] pt-3">
-                    <div>
-                      <p className="text-[9px] uppercase tracking-wider text-[#A98D98]">
-                        Total stay
-                      </p>
-                      <p className="text-base font-semibold mt-1">
-                        {hotel.price || hotel.total_stay || 'Price unavailable'}
-                      </p>
-                    </div>
-                    <div>
-                      <p className="text-[9px] uppercase tracking-wider text-[#A98D98]">
-                        Per night
-                      </p>
-                      <p className="text-sm font-medium mt-1">
-                        {hotel.price_per_night || 'Not available'}
-                      </p>
-                    </div>
-                  </div>
-
-                  {(hotel.check_in || hotel.check_out) && (
-                    <p className="text-[11px] text-[#BCA7AF] mt-3">
-                      {hotel.check_in || 'Check-in unavailable'} → {hotel.check_out || 'Check-out unavailable'}
-                    </p>
-                  )}
-
-                  {hotel.booking_url && (
-                    <a
-                      href={hotel.booking_url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="mt-4 flex items-center justify-center gap-2 w-full rounded-xl bg-[#702D3C] hover:bg-[#873D50] py-3 text-xs font-semibold text-white transition-colors"
-                    >
-                      View booking options <ExternalLink size={13} />
-                    </a>
-                  )}
-                </div>
-              </article>
-            ))}
-          </div>
-        </section>
+        <HotelResults
+          data={{
+            type: 'hotel_list',
+            items: hotels.map((hotel: any) => ({
+              ...hotel,
+              total_stay: hotel.total_stay || hotel.price || undefined,
+              nights:
+                typeof hotel.nights === 'number' && hotel.nights > 0
+                  ? hotel.nights
+                  : getStayNights(hotel.check_in, hotel.check_out),
+            })),
+          }}
+        />
       )}
 
-      {/* FLIGHTS */}
-      {data.flights?.length > 0 && (
-        <section className="rounded-[22px] border border-[#702D3C]/40 bg-[#30252A] p-5 sm:p-6 shadow-lg">
-          <div className="flex items-center gap-2 text-[#D6A8B3] text-[10px] uppercase tracking-[0.2em] font-bold mb-1">
-            <Plane size={14} /> Flight options
-          </div>
-          <h3 className="text-xl font-semibold mb-4">Getting there</h3>
-
-          <div className="grid gap-3">
-            {data.flights.map((flight: any, index: number) => (
-              <article
-                key={index}
-                className="rounded-xl bg-[#1A1417] border border-white/[0.07] p-4"
-              >
-                <div className="flex items-center justify-between gap-3 mb-3">
-                  <p className="text-lg font-semibold">{flight.price}</p>
-                  <span className="text-xs text-[#D6A8B3]">
-                    {flight.stops === 0 ? 'Non-stop' : `${flight.stops ?? '—'} stop(s)`}
-                  </span>
-                </div>
-
-                {flight.segments?.map((segment: any, j: number) => (
-                  <div key={j} className="border-t border-white/[0.07] pt-3 mt-2">
-                    <div className="flex justify-between text-sm gap-2">
-                      <span className="font-medium">
-                        {segment.airline} {segment.flight_number}
-                      </span>
-                      <span className="text-[#C99AA4] text-xs">
-                        {segment.departure}
-                      </span>
-                    </div>
-                    <div className="flex items-center gap-2 text-xs text-[#BCA7AF] mt-2">
-                      <span>{segment.origin}</span>
-                      <ArrowRight size={12} />
-                      <span>{segment.destination}</span>
-                      <span className="ml-auto">{segment.arrival}</span>
-                    </div>
-                  </div>
-                ))}
-
-                {flight.url && (
-                  <a
-                    href={flight.url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="mt-4 flex justify-center items-center gap-2 rounded-xl bg-[#702D3C] hover:bg-[#873D50] py-2.5 text-xs font-semibold"
-                  >
-                    View flight <ExternalLink size={12} />
-                  </a>
-                )}
-              </article>
-            ))}
-          </div>
-        </section>
+      {/* FLIGHTS — reuse the premium standalone flight comparison cards */}
+      {Array.isArray(data.flights) && data.flights.length > 0 && (
+        <FlightResults
+          data={{
+            type: 'flight_list',
+            items: data.flights,
+            // Non-empty flight records came from the configured flight tool.
+            // The component labels these as returned options, not confirmed tickets.
+            live_inventory: true,
+          }}
+        />
       )}
 
       {/* TRANSPORT */}
@@ -468,13 +480,13 @@ export const TripResultCard = ({ data }: { data: TripData }) => {
       )}
 
       {/* FAILURES */}
-      {data.failures?.length > 0 && (
+      {(data.failures?.length ?? 0) > 0 && (
         <section className="rounded-2xl border border-amber-500/20 bg-amber-950/20 p-4">
           <p className="flex items-center gap-2 text-sm font-semibold text-amber-300">
             <AlertTriangle size={16} />
             Some services need attention
           </p>
-          {data.failures.map((failure: any, index: number) => (
+          {(data.failures ?? []).map((failure: any, index: number) => (
             <p key={index} className="text-xs text-amber-100/70 mt-2">
               {failure.tool}: {failure.error}
             </p>

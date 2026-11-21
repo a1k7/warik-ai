@@ -147,6 +147,8 @@ export interface SwiggyConnectionStatus {
   status: string;
   expires_at?: string;
   scope?: string;
+  mode?: string;
+  live_services_enabled?: boolean;
 }
 
 export const swiggyIntegrationApi = {
@@ -164,4 +166,39 @@ export const swiggyIntegrationApi = {
     (await api.delete<{ connected: boolean; status: string }>(
       '/integrations/swiggy'
     )).data,
+};
+
+
+export interface GmailConnectionStatus {
+  connected: boolean;
+  status: string;
+  email_address?: string;
+  expires_at?: string;
+  scope?: string;
+  permission: 'read_only';
+}
+
+export interface GmailContextItem {
+  message_id: string;
+  category: 'flight' | 'hotel' | 'ground_transport' | 'food' | 'other';
+  subject: string;
+  from: string;
+  received_at: string;
+  snippet: string;
+  source: 'Gmail';
+}
+
+export const gmailIntegrationApi = {
+  status: async () =>
+    (await api.get<GmailConnectionStatus>('/integrations/gmail/status')).data,
+  startOAuth: async () =>
+    (await api.post<{ authorization_url: string }>('/integrations/gmail/oauth/start')).data,
+  disconnect: async () =>
+    (await api.delete<{ connected: boolean; status: string }>('/integrations/gmail')).data,
+  travelConfirmations: async (maxResults = 20) =>
+    (await api.get<{
+      source: 'Gmail'; permission: 'read_only'; retrieved_at: string;
+      query_window: string; count: number; items: GmailContextItem[];
+      content_persisted: false; message_bodies_fetched: false;
+    }>('/integrations/gmail/travel-confirmations', { params: { max_results: maxResults } })).data,
 };

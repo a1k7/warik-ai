@@ -5,6 +5,7 @@ from pydantic import ValidationError
 
 from app.models import ActionLog
 from app.tools.base import BaseTool, ToolContext, ToolResult
+from app.tools.input_validation import validate_tool_input
 
 # Productivity tools
 from app.tools.tasks import (
@@ -300,12 +301,17 @@ class ToolRegistry:
             )
 
         try:
-            params = tool.input_schema(**raw_params)
+            params = validate_tool_input(tool, raw_params)
         except ValidationError as exc:
             first_error = exc.errors()[0]
             return ToolResult(
                 success=False,
                 message=f"Invalid arguments: {first_error['msg']}",
+            )
+        except (ValueError, TypeError) as exc:
+            return ToolResult(
+                success=False,
+                message=f"Invalid arguments: {exc}",
             )
 
         try:
@@ -323,6 +329,14 @@ class ToolRegistry:
                 success=False,
                 message=f"Tool '{name}' failed: {str(exc)}",
             )
+
+        # Link validation is centralized here so direct chat and WorkflowEngine
+        # dispatches expose the same sanitized travel payload.
+        if isinstance(result.data, dict) and name in {
+            "search_flights_real", "search_hotels_stayapi", "get_cab_links"
+        }:
+            from app.services.context.provider_links import sanitize_travel_payload
+            result.data = sanitize_travel_payload(name, result.data, provider_id=provider_id)
 
         if result.success:
             payload = raw_params

@@ -69,6 +69,12 @@ TRAVEL RULES:
    - origin
    - destination
    - date (one YYYY-MM-DD date per step)
+8a. If the user explicitly asks for flights but the departure city or date is
+    missing, still include the search_flights_real step. Use an empty string for
+    each missing value; never omit the requested flight step and never invent
+    the value. The deterministic travel normalizer will ask the user to clarify.
+    Use the known single-city trip destination as the flight destination when
+    it is unambiguous; do not guess an endpoint for a multi-stop itinerary.
 9. For cab links, use get_cab_links with:
    - pickup_location
    - dropoff_location
@@ -118,6 +124,58 @@ class GoalInterpreter:
                 ),
                 None,
             )
+
+        # WARIK_EXPLICIT_FLIGHT_CLARIFICATION_V1
+        # Presence of this tool in the model plan means the user explicitly
+        # requested flights. Missing fields must be clarified, not skipped.
+        flight_steps = [
+            step for step in steps_raw
+            if step.get("tool") == "search_flights_real"
+        ]
+        flight_requested = bool(flight_steps)
+        flight_params_hint = (
+            dict(flight_steps[0].get("params") or {}) if flight_steps else {}
+        )
+        flight_origin_hint = first_value(
+            flight_params_hint.get("origin"),
+            flight_params_hint.get("from"),
+            context.get("origin"),
+        )
+        flight_date_hint = first_value(
+            flight_params_hint.get("date"),
+            flight_params_hint.get("dates"),
+            context.get("departure_date"),
+            context.get("travel_date"),
+            context.get("check_in"),
+            context.get("checkin"),
+        )
+        if isinstance(flight_date_hint, list):
+            flight_date_hint = flight_date_hint[0] if flight_date_hint else None
+        if isinstance(flight_date_hint, str):
+            flight_date_hint = flight_date_hint.split(",")[0].strip()
+
+        itinerary_step_hint = next((
+            candidate for candidate in steps_raw
+            if candidate.get("tool") == "generate_advanced_itinerary"
+        ), {})
+        itinerary_params_hint = dict(itinerary_step_hint.get("params") or {})
+        hotel_check_in = first_value(
+            context.get("check_in"),
+            context.get("checkin"),
+            hotel_params.get("check_in"),
+            hotel_params.get("checkin"),
+            itinerary_params_hint.get("check_in"),
+            itinerary_params_hint.get("checkin"),
+        )
+        hotel_check_out = first_value(
+            context.get("check_out"),
+            context.get("checkout"),
+            hotel_params.get("check_out"),
+            hotel_params.get("checkout"),
+            itinerary_params_hint.get("check_out"),
+            itinerary_params_hint.get("checkout"),
+        )
+        flight_date_hint = first_value(flight_date_hint, hotel_check_in)
 
         def is_real_value(value) -> bool:
             if not isinstance(value, str):
@@ -216,6 +274,28 @@ class GoalInterpreter:
                 )
 
                 if hotel_was_requested and not hotel_dates_valid:
+                    if flight_requested:
+                        missing = []
+                        if not is_real_value(flight_origin_hint):
+                            missing.append("your departure city")
+                        if not is_valid_date(requested_check_in):
+                            if not is_valid_date(flight_date_hint):
+                                missing.append(
+                                    "your trip start date (flight departure / hotel check-in)"
+                                )
+                            else:
+                                missing.append("your hotel check-in date")
+                        if not is_valid_date(requested_check_out):
+                            missing.append("your hotel check-out date")
+                        details = ", ".join(missing) if missing else (
+                            "valid hotel check-in and check-out dates"
+                        )
+                        raise TravelClarificationRequired(
+                            "Absolutely. I can coordinate that. I need your "
+                            "departure city and travel dates to search flights "
+                            "and hotel availability accurately. Please share "
+                            f"{details}."
+                        )
                     raise TravelClarificationRequired(
                         "What are your hotel check-in and check-out dates? "
                         "Please provide both dates in YYYY-MM-DD format."
@@ -294,21 +374,28 @@ class GoalInterpreter:
                 params.pop("dates", None)
                 params["date"] = date_value
 
-                # Flight discovery is supplementary. Skip it entirely when
-                # the model has supplied placeholders or incomplete details.
-                if not (
-                    is_real_value(params["origin"])
-                    and is_real_value(params["destination"])
-                    and is_valid_date(date_value)
-                ):
-                    logger.warning(
-                        "Skipping flight search because origin, destination, "
-                        "or date is missing/invalid: origin=%r destination=%r date=%r",
-                        params["origin"],
-                        params["destination"],
-                        date_value,
+                # A missing field must never silently remove an explicitly
+                # requested flight search from a trip workflow. When hotel
+                # dates are present, the trip start/check-in date is the
+                # itinerary's outbound flight date unless the user supplied
+                # a distinct flight date.
+                if not is_valid_date(date_value) and is_valid_date(hotel_check_in):
+                    date_value = hotel_check_in.strip()
+
+                missing_flight_fields = []
+                if not is_real_value(params["origin"]):
+                    missing_flight_fields.append("your departure city")
+                if not is_real_value(params["destination"]):
+                    missing_flight_fields.append("your flight destination")
+                if not is_valid_date(date_value):
+                    missing_flight_fields.append("your flight departure date")
+
+                if missing_flight_fields:
+                    details = ", ".join(missing_flight_fields)
+                    raise TravelClarificationRequired(
+                        "I can search and compare flights, but I need "
+                        f"{details} first."
                     )
-                    continue
 
                 params["origin"] = params["origin"].strip()
                 params["destination"] = params["destination"].strip()

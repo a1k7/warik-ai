@@ -76,7 +76,37 @@ class OptimizeRouteTool(BaseTool):
         for i, p in enumerate(optimized):
             message += f"{i+1}. {p.name}\n"
 
-        return ToolResult(success=True, message=message)
+        route_legs = []
+        total_straight_line_km = 0.0
+        for index in range(len(optimized) - 1):
+            origin = optimized[index]
+            destination = optimized[index + 1]
+            distance_km = haversine(origin, destination)
+            total_straight_line_km += distance_km
+            route_legs.append({
+                "origin": origin.name,
+                "destination": destination.name,
+                "straight_line_distance_km": round(distance_km, 2),
+                "road_distance_km": None,
+                "travel_duration_minutes": None,
+                "evidence_type": "haversine_straight_line_estimate",
+            })
+
+        return ToolResult(
+            success=True,
+            message=(message + "\n\nDistance figures are straight-line estimates, not road distances. "
+                     "No travel duration or live route was verified."),
+            data={
+                "type": "route_estimate",
+                "method": "haversine_straight_line",
+                "items": [{"name": place.name, "lat": place.lat, "lon": place.lon} for place in optimized],
+                "legs": route_legs,
+                "total_straight_line_distance_km": round(total_straight_line_km, 2),
+                "road_distance_km": None,
+                "travel_duration_minutes": None,
+                "live_route_verified": False,
+            },
+        )
 
 class ItineraryInput(BaseModel):
     destination: str

@@ -53,27 +53,15 @@ TRAVEL_PATTERNS = [
 ]
 
 FOOD_PATTERNS = [
-    r"\b(?:find|show|recommend|suggest|good|best|cheap)\b.*\b(?:restaurant|food|cafe|eat|dinner|lunch|breakfast)\b",
+    r"\b(?:find|show|recommend|suggest|good|best|cheap)\b.*\b(?:restaurant|food|cafe|eat|dinner|lunch|breakfast|place to eat)\b",
     r"\b(?:hungry|what should i eat|where.*eat)\b",
-    r"\b(?:biryani|pizza|burger|momos|dosa|idli|chinese|thali|paneer|chicken|shawarma|kebab)\b",
+    r"\bfood\b.*\b(?:preference|prefer|diet|requirement|option|choice)\b",
 ]
 
 HOTEL_PATTERNS = [
     r"\b(?:find|show|book|search|need|want)\b.*\b(?:hotel|stay|accommodation|room)\b",
     r"\bhotel\b.*\b(?:in|near|at)\b",
 ]
-
-
-# ─── COMPREHENSIVE KNOWN CITIES ─────────────────────────────
-
-KNOWN_CITY_NAMES = {
-    "delhi", "new delhi", "mumbai", "bombay", "bangalore", "bengaluru",
-    "chennai", "kolkata", "hyderabad", "pune", "jaipur", "goa", "panaji",
-    "kochi", "cochin", "ahmedabad", "lucknow", "agra", "varanasi", "amritsar",
-    "udaipur", "jodhpur", "jaisalmer", "shimla", "manali", "dharamshala",
-    "darjeeling", "munnar", "alleppey", "alappuzha", "trivandrum", "wayanad",
-    "bhopal", "indore", "nagpur", "surat", "vadodara", "coimbatore",
-}
 
 
 # ─── STATE ↔ CITIES (FOR MISMATCH DETECTION) ────────────────
@@ -118,6 +106,7 @@ def _execute_tool(
     user: User,
     tool_name: str,
     raw_params: dict,
+    conversation: Conversation | None = None,
 ):
     tool = registry.get(tool_name)
 
@@ -183,6 +172,22 @@ def _execute_tool(
         except Exception:
             db.rollback()
 
+    if result.success and conversation is not None and isinstance(result.data, dict):
+        try:
+            from app.services.context.travel_artifacts import attach_tool_result_to_mission
+
+            attached = attach_tool_result_to_mission(
+                conversation,
+                tool_name=tool.name,
+                params=validated_params.model_dump(mode="json"),
+                result_data=result.data,
+            )
+            if attached:
+                db.commit()
+        except Exception:
+            logger.exception("Direct travel evidence capture failed for %s", tool.name)
+            db.rollback()
+
     structured = dict(result.data or {})
     if verification is not None:
         structured["outcome_verification"] = verification
@@ -240,23 +245,18 @@ def _build_confirmation_response(
     )
 
 def _extract_city_from_text(text: str) -> str | None:
-    """Strict city extraction. Known cities first, then regex."""
-
-    text_lower = text.lower()
-
-    for city in KNOWN_CITY_NAMES:
-        if re.search(rf"\b{re.escape(city)}\b", text_lower):
-            return city.title() if city != "new delhi" else "New Delhi"
-
+    """Extract a location phrase without relying on a static city catalogue."""
     match = re.search(
-        r"(?:in|near|around|at)\s+([A-Z][a-zA-Z]+(?:\s+[A-Z][a-zA-Z]+)?)",
+        r"\b(?:in|near|around|at)\s+(.+?)"
+        r"(?=\s+(?:under|below|within|for|with|on|from|to)\b|[,!?;.]|$)",
         text,
+        re.IGNORECASE,
     )
+    if not match:
+        return None
 
-    if match:
-        return match.group(1).strip()
-
-    return None
+    location = " ".join(match.group(1).strip().split())
+    return location or None
 
 
 def _is_short_slot_reply(text: str) -> bool:
@@ -394,6 +394,129 @@ def _detect_state_city_mismatch(
     return False, None
 
 
+def _build_travel_recalculation_chat_response(
+    conversation,
+    report: dict | None,
+    previous_evidence: set[tuple],
+    *,
+    dispatch_error: str | None = None,
+) -> AgentMessageResponse:
+    """Return a deterministic, booking-safe acknowledgement for a changed mission."""
+    from app.services.context.travel_mission import MISSION_KEY, TravelMission
+
+    state = dict(getattr(conversation, "state_json", None) or {})
+    raw = state.get(MISSION_KEY)
+    mission = TravelMission.model_validate(raw) if isinstance(raw, dict) else None
+    mission_data = mission.model_dump(mode="json") if mission is not None else {}
+    mission_version = mission_data.get("version")
+
+    artifacts = mission_data.get("artifacts") or {}
+    newly_captured: set[str] = set()
+    for item in mission_data.get("evidence") or []:
+        if not isinstance(item, dict):
+            continue
+        identity = (
+            item.get("artifact"), item.get("provider"),
+            item.get("retrieved_at"), item.get("mission_version"),
+        )
+        artifact = str(item.get("artifact") or "")
+        record = artifacts.get(artifact) if artifact else None
+        if (
+            identity not in previous_evidence
+            and isinstance(record, dict)
+            and record.get("status") == "current"
+            and record.get("mission_version") == mission_version
+        ):
+            newly_captured.add(artifact)
+
+    pending_records = [
+        item for item in mission_data.get("pending_recalculations", [])
+        if isinstance(item, dict)
+    ]
+    pending = sorted({
+        str(item.get("artifact")) for item in pending_records
+        if item.get("artifact") and str(item.get("status", "pending"))
+        in {"pending", "dispatching", "running", "awaiting_approval"}
+    })
+    blocked_records = [
+        {
+            "artifact": item.get("artifact"),
+            "reason": item.get("blocked_reason") or item.get("reason") or "Refresh is blocked.",
+        }
+        for item in pending_records if item.get("status") == "blocked"
+    ]
+    if isinstance(report, dict):
+        for item in report.get("blocked") or []:
+            if isinstance(item, dict):
+                record = {
+                    "artifact": item.get("artifact"),
+                    "reason": item.get("reason") or "Refresh is blocked.",
+                }
+                if record not in blocked_records:
+                    blocked_records.append(record)
+
+    completed_locally = bool(
+        isinstance(report, dict) and report.get("completed_locally")
+    )
+    selection = (mission_data.get("selections") or {}).get("flights") or {}
+    selected_index = selection.get("candidate_index") if isinstance(selection, dict) else None
+    selection_status = selection.get("selection_status") if isinstance(selection, dict) else None
+
+    human_names = {
+        "flights": "flight search",
+        "hotels": "hotel search",
+        "transfers": "transfer options",
+        "routes": "route estimates",
+        "itinerary": "itinerary",
+        "budget": "budget assessment",
+    }
+    sentences: list[str] = []
+    if newly_captured:
+        names = ", ".join(human_names.get(item, item) for item in sorted(newly_captured))
+        sentences.append(f"I refreshed the {names} using current search evidence.")
+    if completed_locally:
+        sentences.append("I recalculated the budget and feasibility using the evidence currently available.")
+    if blocked_records:
+        first = blocked_records[0]
+        name = human_names.get(str(first.get("artifact")), str(first.get("artifact") or "travel search"))
+        reason = str(first.get("reason") or "Required details are missing.")[:260]
+        sentences.append(f"I couldn't refresh the {name} yet: {reason}")
+    if pending:
+        names = ", ".join(human_names.get(item, item) for item in pending)
+        sentences.append(f"These updates are still pending: {names}.")
+    if dispatch_error:
+        sentences.append(
+            "The automatic refresh could not start. Previous results remain marked according to their existing freshness status."
+        )
+    if not newly_captured and not completed_locally and not blocked_records and not pending and not dispatch_error:
+        sentences.append("I've updated your travel details. No previously saved dependent search results needed refreshing.")
+
+    if selected_index is not None and selection_status == "selected_not_booked":
+        sentences.append(f"Flight option {selected_index} is selected for planning; it has not been booked.")
+    sentences.append("These are search results and planning estimates, not reservations. No booking or payment was made.")
+
+    report_status = (
+        report.get("status") if isinstance(report, dict)
+        else ("dispatch_error" if dispatch_error else "no_refresh_required")
+    )
+    structured = {
+        "type": "travel_recalculation",
+        "status": report_status,
+        "workflow_id": report.get("workflow_id") if isinstance(report, dict) else None,
+        "refreshed_artifacts": sorted(newly_captured),
+        "completed_locally": ["budget"] if completed_locally else [],
+        "blocked_artifacts": blocked_records,
+        "pending_artifacts": pending,
+        "selection": {
+            "flight_option": selected_index,
+            "status": selection_status,
+        } if selected_index is not None else None,
+        "booking_status": "not_booked",
+        "feasibility": mission_data.get("feasibility"),
+    }
+    return AgentMessageResponse(reply=" ".join(sentences), structured_data=structured)
+
+
 # ─── MAIN HANDLER ───────────────────────────────────────────
 
 async def handle_message(
@@ -424,10 +547,118 @@ async def handle_message(
             detail="Conversation not found.",
         )
 
+    # Snapshot an existing travel mission before merging this turn. A deterministic
+    # refresh response is returned only for an actual update to an existing mission;
+    # a first-time trip request continues through the normal trip planner.
+    _travel_before_state = dict(getattr(conversation, "state_json", None) or {})
+    _travel_before_mission = _travel_before_state.get("travel_mission")
+    _travel_before_version = (
+        _travel_before_mission.get("version")
+        if isinstance(_travel_before_mission, dict) else None
+    )
+    _travel_before_id = (
+        _travel_before_mission.get("mission_id")
+        if isinstance(_travel_before_mission, dict) else None
+    )
+    _travel_previous_evidence = {
+        (
+            item.get("artifact"), item.get("provider"),
+            item.get("retrieved_at"), item.get("mission_version"),
+        )
+        for item in (_travel_before_mission.get("evidence") or [])
+        if isinstance(item, dict)
+    } if isinstance(_travel_before_mission, dict) else set()
+
     state = update_conversation_context(conversation, text)
+    _travel_after_mission = (state or {}).get("travel_mission")
+    _travel_mission_changed = bool(
+        isinstance(_travel_before_mission, dict)
+        and isinstance(_travel_after_mission, dict)
+        and (
+            _travel_after_mission.get("mission_id") != _travel_before_id
+            or _travel_after_mission.get("version") != _travel_before_version
+        )
+    )
+
+    # Phase 2C: refresh only stale travel evidence through WorkflowEngine.
+    # The dispatcher defers while another user workflow is active.
+    recalculation_report = None
+    recalculation_error = None
+    try:
+        from app.services.context.travel_recalculation import (
+            dispatch_pending_travel_recalculations,
+        )
+        recalculation_report = dispatch_pending_travel_recalculations(
+            db, user, conversation, registry=registry
+        )
+        if recalculation_report:
+            state = dict(getattr(conversation, "state_json", None) or {})
+    except Exception as exc:
+        recalculation_error = type(exc).__name__
+        logger.exception("Travel recalculation dispatch failed")
+
+    # Do not let a language-model fallback obscure the execution outcome after
+    # an explicit update to an existing mission.
+    if _travel_mission_changed:
+        return _build_travel_recalculation_chat_response(
+            conversation,
+            recalculation_report,
+            _travel_previous_evidence,
+            dispatch_error=recalculation_error,
+        )
     db.commit()
+
+    # Travel ledger reads must never be answered from free-form chat history.
+    # The deterministic handler reads only the persisted mission/evidence state.
+    if document_id is None:
+        from app.services.context.travel_response import build_travel_mission_read_response
+        travel_read_response = build_travel_mission_read_response(conversation, text)
+        if travel_read_response is not None:
+            return travel_read_response
+
     active_workflow_id = state.get("active_workflow_id")
     awaiting = state.get("awaiting")
+
+    # WARIK_PENDING_TRAVEL_STATE_V1
+    # Keep the original travel goal while the user supplies missing slots.
+    # This prevents a short follow-up such as "Departure city - Delhi" from
+    # falling through to an unconstrained LLM answer that could invent prices.
+    pending_travel = state.get("pending_travel")
+    resuming_pending_travel = False
+    pending_travel_original = None
+    incoming_text = text.strip()
+
+    if isinstance(pending_travel, dict):
+        # A new complete travel request replaces the older pending request.
+        if _matches(incoming_text, TRAVEL_PATTERNS):
+            state.pop("pending_travel", None)
+            pending_travel = None
+            conversation.state_json = state
+            db.commit()
+        else:
+            pending_travel_original = str(
+                pending_travel.get("original_request") or ""
+            ).strip()
+            if pending_travel_original:
+                followups = pending_travel.get("followups") or []
+                if not isinstance(followups, list):
+                    followups = []
+                followups = [str(item)[:500] for item in followups if str(item).strip()]
+                followups.append(incoming_text[:500])
+                followups = followups[-8:]
+                pending_travel["original_request"] = pending_travel_original[:4000]
+                pending_travel["followups"] = followups
+                state["pending_travel"] = pending_travel
+                conversation.state_json = state
+                db.commit()
+                resuming_pending_travel = True
+                details = "\n".join(f"- {item}" for item in followups)
+                text = (
+                    pending_travel_original
+                    + "\n\nAdditional travel details explicitly supplied by the user:\n"
+                    + details
+                )
+
     provider = get_provider()
 
     # 0. DOCUMENT
@@ -469,10 +700,9 @@ async def handle_message(
                     user,
                     "discover_food",
                     {
+                        **(awaiting.get("food_params") or {}),
                         "location": city,
-                        "query": awaiting.get("query", "restaurant"),
-                        "budget": awaiting.get("budget"),
-                    },
+                    }, conversation=conversation,
                 )
                 return resp
 
@@ -544,7 +774,7 @@ async def handle_message(
                         "check_out": check_out,
                         "travellers": awaiting.get("travellers", 2),
                         "budget": awaiting.get("budget"),
-                    },
+                    }, conversation=conversation,
                 )
 
                 return resp
@@ -610,7 +840,7 @@ async def handle_message(
                 db,
                 user,
                 intent,
-                raw_params,
+                raw_params, conversation=conversation,
             )
 
             return response
@@ -696,7 +926,13 @@ async def handle_message(
                 )
 
     # 4. STATE MISMATCH
-    is_mismatch, mismatch_msg = _detect_state_city_mismatch(text)
+    # WARIK_PENDING_TRAVEL_MISMATCH_BYPASS_V1
+    # A departure-city follow-up is context for the pending trip, not a
+    # second destination. Keep normal mismatch checks for fresh requests.
+    if resuming_pending_travel:
+        is_mismatch, mismatch_msg = False, None
+    else:
+        is_mismatch, mismatch_msg = _detect_state_city_mismatch(text)
 
     if is_mismatch:
         return AgentMessageResponse(reply=mismatch_msg)
@@ -731,7 +967,7 @@ async def handle_message(
                     "rent": float(rent_m.group(1).replace(",", "")) if rent_m else 0,
                     "food": float(food_m.group(1).replace(",", "")) if food_m else 0,
                     "travel": float(travel_m.group(1).replace(",", "")) if travel_m else 0,
-                },
+                }, conversation=conversation,
             )
 
             return resp
@@ -740,65 +976,58 @@ async def handle_message(
             reply="What's your monthly income and fixed expenses (rent, food, travel)?"
         )
 
-    # 6. TRAVEL
+    # 6. TRAVEL — use the same registry/schema-driven planner as other tasks.
+    # Do not maintain a separate travel-only parameter mapping path.
     if _matches(text, TRAVEL_PATTERNS):
-        interpreter = GoalInterpreter()
-
-        result = await interpreter.interpret(
-            text,
-            _build_history_summary(conversation),
+        planner_context = build_conversation_context(
+            conversation,
+            latest_text=text,
+            workflow=(db.get(Workflow, active_workflow_id) if active_workflow_id else None),
         )
+        memory_query = "\n".join([planner_context, text])
+        saved_memory_context = build_memory_context(
+            db,
+            user_id=user.id,
+            query=memory_query,
+        )
+        if saved_memory_context:
+            planner_context += "\n\n" + saved_memory_context
 
-        if result.get("needs_clarification"):
+        universal = UniversalTaskPlanner(provider=provider)
+        decision = await universal.interpret(text, planner_context)
+
+        if decision.get("decision") == "clarification":
+            existing_pending = state.get("pending_travel")
+            original_request = (
+                pending_travel_original
+                or (
+                    str(existing_pending.get("original_request") or "").strip()
+                    if isinstance(existing_pending, dict)
+                    else ""
+                )
+                or text.strip()
+            )
+            followups = (
+                existing_pending.get("followups", [])
+                if isinstance(existing_pending, dict)
+                else []
+            )
+            state["pending_travel"] = {
+                "original_request": original_request[:4000],
+                "followups": followups[-8:] if isinstance(followups, list) else [],
+            }
+            conversation.state_json = state
+            db.commit()
             return AgentMessageResponse(
-                reply=result["clarification_question"]
+                reply=decision.get("reply") or "What detail should I use?"
             )
 
-        if result.get("plan"):
-            plan = result["plan"]
-
-            # Preserve the structured destination from GoalInterpreter.
-            # Do not infer destinations from words following "including",
-            # "covering" or "across".
-            itinerary_destination = _resolve_itinerary_destination(plan)
-
-            for step in plan.steps:
-                if "itinerary" in step.tool:
-                    if not itinerary_destination:
-                        return AgentMessageResponse(
-                            reply="Which destination would you like to visit?"
-                        )
-
-                    step.params["destination"] = itinerary_destination
-
-                    if "days" in step.params:
-                        try:
-                            parsed_days = int(step.params["days"])
-                        except (TypeError, ValueError):
-                            return AgentMessageResponse(
-                                reply=(
-                                    "I couldn't determine the trip duration. "
-                                    "How many days should the itinerary cover?"
-                                )
-                            )
-
-                        if parsed_days < 1 or parsed_days > 14:
-                            return AgentMessageResponse(
-                                reply=(
-                                    "Please specify a trip duration between "
-                                    "1 and 14 days."
-                                )
-                            )
-
-                        step.params["days"] = parsed_days
-
-                for key in ("check_in", "check_out", "date"):
-                    if key in step.params and isinstance(step.params[key], str):
-                        step.params[key] = re.sub(
-                            r"(\d{4}-\d{2}-\d{2}).*",
-                            r"\1",
-                            step.params[key],
-                        )
+        if decision.get("decision") == "workflow" and decision.get("plan"):
+            # Only supersede an existing workflow after the new plan passes
+            # registry, schema, dependency and binding validation.
+            if state.pop("pending_travel", None) is not None:
+                conversation.state_json = state
+                db.commit()
 
             old = (
                 db.query(Workflow)
@@ -808,6 +1037,7 @@ async def handle_message(
                         [
                             "PLANNED",
                             "IN_PROGRESS",
+                            "EXECUTING",
                             "AWAITING_APPROVAL",
                             "PARTIALLY_COMPLETED",
                         ]
@@ -816,63 +1046,88 @@ async def handle_message(
                 .order_by(Workflow.updated_at.desc())
                 .first()
             )
-
             if old:
                 old.status = "SUPERSEDED"
                 db.commit()
 
             engine = WorkflowEngine(db, user)
-
-            workflow = engine.create_workflow(
-                conversation.id,
-                plan,
-            )
-
+            workflow = engine.create_workflow(conversation.id, decision["plan"])
             state["active_workflow_id"] = workflow.id
             conversation.state_json = state
             db.commit()
-
             exec_result = engine.execute(workflow)
-
             return await _workflow_response(
-                db,
-                user,
-                conversation,
-                workflow,
-                exec_result,
+                db, user, conversation, workflow, exec_result
             )
+
+        # Preserve the travel request when planning is unavailable.
+        # This allows a later retry or clarification to retain its context.
+        existing_pending = state.get("pending_travel")
+        original_request = (
+            pending_travel_original
+            or (
+                str(existing_pending.get("original_request") or "").strip()
+                if isinstance(existing_pending, dict)
+                else ""
+            )
+            or text.strip()
+        )
+        followups = (
+            existing_pending.get("followups", [])
+            if isinstance(existing_pending, dict)
+            else []
+        )
+        state["pending_travel"] = {
+            "original_request": original_request[:4000],
+            "followups": followups[-8:] if isinstance(followups, list) else [],
+        }
+        conversation.state_json = state
+        db.commit()
+
+        # A travel request must never fall through to unconstrained prose
+        # synthesis when planning is unavailable or malformed.
+        return AgentMessageResponse(
+            reply=(
+                "I couldn't safely build an executable plan from the available "
+                "capabilities. No searches or bookings were claimed. Please "
+                "rephrase the request or provide the missing details."
+            )
+        )
 
     # 7. FOOD
     if _matches(text, FOOD_PATTERNS):
         city = _extract_city_from_text(text)
         budget = _extract_budget(text)
-        food_query = "restaurant"
-        low = text.lower()
 
-        for dish in [
-            "biryani", "pizza", "burger", "momos", "dosa", "idli",
-            "chinese", "thali", "paneer", "chicken", "shawarma", "kebab",
-        ]:
-            if dish in low:
-                food_query = dish
-                break
+        # Keep dietary descriptions supplied by the user as request data.
+        # They are not treated as proof that a restaurant supports those diets.
+        dietary_requirements = []
+        for match in re.finditer(
+            r"\\b(?:non[\\s-]?vegetarian|vegetarian|non[\\s-]?veg|veg)\\b",
+            text,
+            re.IGNORECASE,
+        ):
+            value = " ".join(match.group(0).lower().split())
+            if value not in dietary_requirements:
+                dietary_requirements.append(value)
+
+        food_params = {
+            "query": "restaurant",
+            "budget": budget,
+            "dietary_requirements": dietary_requirements,
+        }
 
         if not city:
             state["awaiting"] = {
                 "slot": "city",
                 "intent": "food",
-                "budget": budget,
-                "query": food_query,
+                "food_params": food_params,
             }
-
             conversation.state_json = state
             db.commit()
 
             return AgentMessageResponse(
-                reply=(
-                    "I can find that for you! Which city? "
-                    "(e.g., Delhi, Mumbai, Bangalore)"
-                )
+                reply="Which city should I search in?"
             )
 
         state["last_location"] = city
@@ -884,10 +1139,9 @@ async def handle_message(
             user,
             "discover_food",
             {
+                **food_params,
                 "location": city,
-                "query": food_query,
-                "budget": budget,
-            },
+            }, conversation=conversation,
         )
 
         return resp
@@ -947,7 +1201,7 @@ async def handle_message(
                 "check_out": check_out,
                 "travellers": _normalize_people(text) or 2,
                 "budget": budget,
-            },
+            }, conversation=conversation,
         )
 
         return resp
@@ -997,6 +1251,17 @@ async def handle_message(
 
     universal = UniversalTaskPlanner(provider=provider)
     decision = await universal.interpret(text, planner_context)
+
+    # Fail closed: never turn an unavailable execution plan into
+    # an unrestricted conversational claim that an action succeeded.
+    if decision.get("decision") == "unavailable":
+        return AgentMessageResponse(
+            reply=(
+                "I couldn't safely construct an executable plan. "
+                "No actions were executed. Please retry or clarify "
+                "the request."
+            )
+        )
 
     if decision.get("decision") == "clarification":
         return AgentMessageResponse(
@@ -1048,6 +1313,17 @@ async def handle_message(
 
 
 # ─── WORKFLOW RESPONSE ──────────────────────────────────────
+
+def _clear_completed_workflow_pointer(conversation, db, workflow_id: int) -> None:
+    """Clear this workflow pointer without deleting the travel mission or context."""
+    state = dict(getattr(conversation, "state_json", None) or {})
+    if state.get("active_workflow_id") == workflow_id:
+        state.pop("active_workflow_id", None)
+    if state.get("travel_recalculation_workflow_id") == workflow_id:
+        state.pop("travel_recalculation_workflow_id", None)
+    conversation.state_json = state
+    db.commit()
+
 
 async def _workflow_response(
     db,
@@ -1102,8 +1378,7 @@ async def _workflow_response(
                 break
 
     if trip_summary:
-        conversation.state_json = {}
-        db.commit()
+        _clear_completed_workflow_pointer(conversation, db, workflow.id)
 
         msg = "Here is your trip plan."
 
@@ -1162,10 +1437,17 @@ async def _workflow_response(
                 "source_number": index,
                 "title": source.get("title") or "",
                 "url": source.get("url") or source.get("search_url") or "",
-                "retrieved": bool(source.get("retrieved")),
+                "retrieved": source.get("retrieved") is True,
+                "retrieved_at": source.get("retrieved_at"),
+                "domain": source.get("domain"),
+                "source_category": source.get("source_category", "general_web"),
+                "relevance_score": source.get("relevance_score"),
+                "matched_queries": source.get("matched_queries", []),
                 "retrieval_error": source.get("retrieval_error"),
-                "content": source.get("content", "") if source.get("retrieved") else "",
-                "search_snippet": source.get("search_snippet", ""),
+                "content": (
+                    source.get("content", "")
+                    if source.get("retrieved") is True else ""
+                ),
             })
 
         if not retrieved_sources:
@@ -1181,9 +1463,15 @@ async def _workflow_response(
                     "status": "retrieval_failed",
                     "sources": [
                         {
+                            "source_number": item.get("source_number"),
                             "title": item.get("title"),
                             "url": item.get("url"),
                             "retrieved": item.get("retrieved"),
+                            "retrieved_at": item.get("retrieved_at"),
+                            "domain": item.get("domain"),
+                            "source_category": item.get("source_category"),
+                            "relevance_score": item.get("relevance_score"),
+                            "matched_queries": item.get("matched_queries"),
                             "retrieval_error": item.get("retrieval_error"),
                         }
                         for item in source_lines
@@ -1215,7 +1503,13 @@ async def _workflow_response(
                 "content": (
                     "Answer the user's web research request using only the "
                     "retrieved webpage evidence. Include a concise explanation "
-                    "and inline source numbers. Clearly disclose uncertainty.\n\n"
+                    "and inline source numbers. Clearly disclose uncertainty. "
+                    "Compare relevant sources, identify conflicting or missing "
+                    "evidence, distinguish official sources from general websites, "
+                    "and recommend the most useful destination pages for the user's "
+                    "goal. Do not treat domain category or search relevance as proof "
+                    "of trustworthiness. Never invent prices, availability, rankings "
+                    "or facts.\n\n"
                     f"User request: {latest_user_message}"
                 ),
             }],
@@ -1229,9 +1523,15 @@ async def _workflow_response(
                 "status": "completed",
                 "sources": [
                     {
+                        "source_number": item.get("source_number"),
                         "title": item.get("title"),
                         "url": item.get("url"),
                         "retrieved": item.get("retrieved"),
+                        "retrieved_at": item.get("retrieved_at"),
+                        "domain": item.get("domain"),
+                        "source_category": item.get("source_category"),
+                        "relevance_score": item.get("relevance_score"),
+                        "matched_queries": item.get("matched_queries"),
                         "retrieval_error": item.get("retrieval_error"),
                     }
                     for item in source_lines
@@ -1240,8 +1540,7 @@ async def _workflow_response(
         )
 
     if status in ("COMPLETED", "PARTIALLY_COMPLETED"):
-        conversation.state_json = {}
-        db.commit()
+        _clear_completed_workflow_pointer(conversation, db, workflow.id)
 
         lines = []
         for step in completed:
@@ -1275,8 +1574,7 @@ async def _workflow_response(
         )
 
     if status == "FAILED":
-        conversation.state_json = {}
-        db.commit()
+        _clear_completed_workflow_pointer(conversation, db, workflow.id)
 
         lines = [
             f"❌ {step['description']}: {step.get('error', 'unavailable')}"

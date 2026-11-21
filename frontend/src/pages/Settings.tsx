@@ -10,10 +10,15 @@ import {
   RefreshCw,
   Unplug,
   ExternalLink,
+  Mail,
+  Search,
 } from 'lucide-react';
 import {
   swiggyIntegrationApi,
   type SwiggyConnectionStatus,
+  gmailIntegrationApi,
+  type GmailConnectionStatus,
+  type GmailContextItem,
 } from '../api';
 
 const palettes = [
@@ -44,6 +49,14 @@ export const Settings = () => {
   const [swiggyMessageType, setSwiggyMessageType] =
     useState<'success' | 'error' | ''>('');
 
+  const [gmailStatus, setGmailStatus] = useState<GmailConnectionStatus | null>(null);
+  const [gmailLoading, setGmailLoading] = useState(true);
+  const [gmailBusy, setGmailBusy] = useState(false);
+  const [gmailScanBusy, setGmailScanBusy] = useState(false);
+  const [gmailMessage, setGmailMessage] = useState('');
+  const [gmailMessageType, setGmailMessageType] = useState<'success' | 'error' | ''>('');
+  const [gmailItems, setGmailItems] = useState<GmailContextItem[]>([]);
+
   useEffect(() => {
     document.documentElement.dataset.theme = dark ? 'dark' : 'light';
     document.documentElement.style.setProperty('--warik-accent', accent);
@@ -67,9 +80,88 @@ export const Settings = () => {
     }
   };
 
+  const loadGmailStatus = async () => {
+    setGmailLoading(true);
+    try {
+      setGmailStatus(await gmailIntegrationApi.status());
+    } catch {
+      setGmailMessage('Unable to load Gmail connection status.');
+      setGmailMessageType('error');
+    } finally {
+      setGmailLoading(false);
+    }
+  };
+
+  const connectGmail = async () => {
+    setGmailBusy(true);
+    setGmailMessage('');
+    setGmailMessageType('');
+    try {
+      const response = await gmailIntegrationApi.startOAuth();
+      if (!response.authorization_url) throw new Error('Google authorization URL was not returned.');
+      window.location.assign(response.authorization_url);
+    } catch (error: unknown) {
+      const message = (error as { response?: { data?: { detail?: string } } })?.response?.data?.detail
+        || 'Could not start Google authorization. Check the backend configuration.';
+      setGmailMessage(message);
+      setGmailMessageType('error');
+      setGmailBusy(false);
+    }
+  };
+
+  const disconnectGmail = async () => {
+    if (!window.confirm('Disconnect Gmail from Warik? Local OAuth credentials will be deleted.')) return;
+    setGmailBusy(true);
+    setGmailMessage('');
+    try {
+      await gmailIntegrationApi.disconnect();
+      setGmailStatus({ connected: false, status: 'disconnected', permission: 'read_only' });
+      setGmailItems([]);
+      setGmailMessage('Gmail disconnected. Local credentials have been deleted.');
+      setGmailMessageType('success');
+    } catch (error: unknown) {
+      const message = (error as { response?: { data?: { detail?: string } } })?.response?.data?.detail
+        || 'Could not disconnect Gmail.';
+      setGmailMessage(message);
+      setGmailMessageType('error');
+    } finally {
+      setGmailBusy(false);
+    }
+  };
+
+  const scanGmail = async () => {
+    setGmailScanBusy(true);
+    setGmailMessage('');
+    setGmailMessageType('');
+    try {
+      const result = await gmailIntegrationApi.travelConfirmations(20);
+      setGmailItems(result.items);
+      setGmailMessage(`Found ${result.count} matching messages. Results are on-demand and were not saved by Warik.`);
+      setGmailMessageType('success');
+    } catch (error: unknown) {
+      const message = (error as { response?: { data?: { detail?: string } } })?.response?.data?.detail
+        || 'Could not search Gmail. Reconnect and try again.';
+      setGmailMessage(message);
+      setGmailMessageType('error');
+    } finally {
+      setGmailScanBusy(false);
+    }
+  };
+
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const callbackResult = params.get('swiggy');
+    const gmailCallbackResult = params.get('gmail');
+
+    if (gmailCallbackResult === 'connected') {
+      setGmailMessage('Gmail connected. Warik has read-only access to selected message metadata.');
+      setGmailMessageType('success');
+      window.history.replaceState({}, '', window.location.pathname);
+    } else if (gmailCallbackResult === 'error') {
+      setGmailMessage('Google authorization could not be completed. Please check your OAuth setup and try again.');
+      setGmailMessageType('error');
+      window.history.replaceState({}, '', window.location.pathname);
+    }
 
     if (callbackResult === 'connected') {
       setSwiggyMessage('Swiggy authorization completed.');
@@ -84,6 +176,7 @@ export const Settings = () => {
     }
 
     void loadSwiggyStatus();
+    void loadGmailStatus();
   }, []);
 
   const connectSwiggy = async () => {
@@ -221,8 +314,8 @@ export const Settings = () => {
         <div className="settings-card-title">
           <span className="settings-icon"><Utensils size={19} /></span>
           <div>
-            <h2>Connected services</h2>
-            <p>Manage the services Warik can work with.</p>
+            <h2>Account Hub</h2>
+            <p>Connect personal accounts and control exactly what Warik can access.</p>
           </div>
         </div>
 
@@ -243,9 +336,16 @@ export const Settings = () => {
           </div>
 
           <p className="integration-description">
-            Connect your Swiggy account to let Warik access supported food
-            discovery features through Swiggy authorization.
+            Connect through Swiggy authorization. Warik never asks for your password or OTP.
+            Available tools and live access depend on your approved Swiggy MCP mode.
           </p>
+          {swiggyStatus?.mode && (
+            <p className="integration-meta">
+              Connector mode: {swiggyStatus.mode}. {swiggyStatus.live_services_enabled
+                ? 'Production services enabled.'
+                : 'Live Swiggy services are not enabled in this deployment.'}
+            </p>
+          )}
 
           {swiggyStatus?.expires_at && connected && (
             <p className="integration-meta">
@@ -301,10 +401,69 @@ export const Settings = () => {
           )}
         </div>
 
-        <p className="integration-footnote">
-          Warik never asks for your Swiggy password or OTP. Authorization
-          takes place through Swiggy.
-        </p>
+        <div className="account-hub-divider" />
+        <div className="integration-provider">
+          <div className="integration-provider-heading">
+            <div>
+              <strong><Mail size={14} style={{ display: 'inline', verticalAlign: 'middle', marginRight: 6 }} />Google Gmail</strong>
+              <small>Read-only personal context for travel and order confirmations</small>
+            </div>
+            <span className={`integration-badge ${gmailStatus?.connected ? 'connected' : ''}`}>
+              {gmailLoading ? 'Checking' : gmailStatus?.connected ? 'Connected' : 'Not connected'}
+            </span>
+          </div>
+          <p className="integration-description">
+            When you request it, Warik searches a limited two-year window for travel,
+            hotel, ride and food confirmations. It reads selected headers and a short
+            Gmail snippet only; it does not fetch full message bodies or save scan results.
+          </p>
+          {gmailStatus?.email_address && gmailStatus.connected && (
+            <p className="integration-meta">Connected account: {gmailStatus.email_address}</p>
+          )}
+          {gmailStatus?.scope && gmailStatus.connected && (
+            <p className="integration-meta">Permission: Gmail read-only ({gmailStatus.scope})</p>
+          )}
+          <div className="integration-actions">
+            {gmailStatus?.connected ? (
+              <>
+                <button className="integration-button primary" onClick={() => void scanGmail()} disabled={gmailBusy || gmailScanBusy || gmailLoading}>
+                  <Search size={15} /> {gmailScanBusy ? 'Searching…' : 'Find my confirmations'}
+                </button>
+                <button className="integration-button secondary" onClick={() => void disconnectGmail()} disabled={gmailBusy || gmailScanBusy || gmailLoading}>
+                  <Unplug size={15} /> {gmailBusy ? 'Disconnecting…' : 'Disconnect'}
+                </button>
+              </>
+            ) : (
+              <button className="integration-button primary" onClick={() => void connectGmail()} disabled={gmailBusy || gmailLoading}>
+                <ExternalLink size={15} /> {gmailBusy ? 'Connecting…' : 'Connect Gmail'}
+              </button>
+            )}
+            <button className="integration-refresh" onClick={() => void loadGmailStatus()} disabled={gmailLoading || gmailBusy} aria-label="Refresh Gmail status">
+              <RefreshCw size={15} />
+            </button>
+          </div>
+          {gmailMessage && <p className={`integration-message ${gmailMessageType}`} role="status">{gmailMessage}</p>}
+          {gmailItems.length > 0 && (
+            <div className="gmail-context-results">
+              <div className="gmail-context-heading">Recent matching messages · not stored</div>
+              {gmailItems.map(item => (
+                <article className="gmail-context-item" key={item.message_id}>
+                  <div className="gmail-context-meta">
+                    <span>{item.category.replace('_', ' ')}</span>
+                    <time>{item.received_at}</time>
+                  </div>
+                  <strong>{item.subject}</strong>
+                  <small>{item.from}</small>
+                  {item.snippet && <p>{item.snippet}</p>}
+                </article>
+              ))}
+            </div>
+          )}
+          <p className="integration-footnote">
+            Gmail access is read-only. Warik cannot send, delete, modify or archive email.
+            Disconnecting removes the locally stored OAuth credentials.
+          </p>
+        </div>
       </section>
 
       <section className="settings-card">

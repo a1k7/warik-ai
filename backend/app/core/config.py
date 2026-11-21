@@ -73,6 +73,13 @@ class Settings(BaseSettings):
     swiggy_dineout_mcp_url: str = "https://mcp.swiggy.com/dineout"
     swiggy_scenes_mcp_url: str = "https://mcp.swiggy.com/scenes"
 
+    # Google Gmail personal-context connector (read-only OAuth)
+    google_client_id: str = ""
+    google_client_secret: str = ""
+    google_redirect_uri: str = "http://localhost:8000/api/integrations/gmail/oauth/callback"
+    google_frontend_return_url: str = "http://localhost:5173/settings"
+    google_token_encryption_key: str = ""
+
     agoda_mode: str = "redirect_only"
     agoda_affiliate_url: str = ""
     agoda_affiliate_id: str = ""

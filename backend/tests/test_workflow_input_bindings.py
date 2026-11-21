@@ -318,3 +318,51 @@ def test_skipped_optional_step_does_not_make_completed_workflow_partial():
     )
 
     assert status == "COMPLETED"
+
+def test_engine_rejects_placeholder_from_required_binding_before_execution():
+    """A resolved placeholder must never reach downstream tool execution."""
+    db = MagicMock()
+    db.get.return_value = None
+
+    engine = WorkflowEngine(
+        db,
+        MagicMock(id=5),
+        tool_registry=FakeRegistry(),
+    )
+
+    workflow = MagicMock(id=10, goal_id=20, status="PLANNED")
+    workflow.steps_json = [
+        {
+            "id": "source",
+            "tool": "source_tool",
+            "params": {},
+            "depends_on": [],
+            "status": "COMPLETED",
+            "result": {"location": "empty"},
+        },
+        {
+            "id": "consumer",
+            "tool": "consume_location",
+            "params": {},
+            "depends_on": ["source"],
+            "status": "PENDING",
+            "required": True,
+            "input_bindings": {
+                "location": {
+                    "source_step": "source",
+                    "source_path": "location",
+                    "required": True,
+                }
+            },
+        },
+    ]
+
+    with patch.object(engine, "_invoke_tool") as invoke:
+        result = engine.execute(workflow)
+
+    consumer = workflow.steps_json[1]
+
+    assert consumer["status"] == "FAILED"
+    assert "placeholder" in consumer["error"].lower()
+    assert result["executed"] == []
+    invoke.assert_not_called()

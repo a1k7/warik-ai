@@ -126,15 +126,32 @@ export interface AdvancedItinerary {
   generated_at: string;
 }
 
+export interface ResearchSource {
+  source_number?: number;
+  title?: string;
+  url?: string;
+  retrieved?: boolean;
+  retrieved_at?: string | null;
+  domain?: string | null;
+  source_category?: string;
+  relevance_score?: number | null;
+  matched_queries?: string[];
+  retrieval_error?: string | null;
+}
+
 export interface StructuredData {
   type:
     | 'hotel_list'
     | 'flight_list'
     | 'food_list'
     | 'cab_handoff'
-    | 'advanced_itinerary';
+    | 'advanced_itinerary'
+    | 'web_research'
+    | 'travel_recalculation';
   items?: (HotelItem | FlightItem | FoodItem)[];
   search_url?: string;
+  status?: string;
+  sources?: ResearchSource[];
   live_inventory?: boolean;
   resolution_status?: string;
   provider_error?: string;

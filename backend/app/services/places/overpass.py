@@ -218,9 +218,9 @@ class OverpassProvider:
                 "Free" if fee in {"no", "false", "0"} else tags.get("charge")
             )
             category = (
-                tags.get("tourism")
+                tags.get("amenity")
+                or tags.get("tourism")
                 or tags.get("historic")
-                or tags.get("amenity")
                 or tags.get("leisure")
             )
             dietary_tags = {

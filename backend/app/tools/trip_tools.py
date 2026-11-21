@@ -35,60 +35,6 @@ RESTAURANT_CATEGORIES = "catering.restaurant,catering.cafe"
 DEFAULT_RADIUS_M = 35000
 RESTAURANT_RADIUS_M = 15000
 
-BASE_ACCOM_PER_NIGHT = 1500
-BASE_FOOD_PER_DAY_PER_PERSON = 700
-BASE_LOCAL_PER_DAY = 400
-BASE_MISC_PER_DAY = 250
-
-COST_INDEX = {
-    "kochi": 1.1, "cochin": 1.1, "munnar": 1.0, "alleppey": 1.0, "alappuzha": 1.0,
-    "mumbai": 1.6, "delhi": 1.5, "new delhi": 1.5, "bangalore": 1.4, "bengaluru": 1.4,
-    "jaipur": 0.9, "udaipur": 0.9, "jodhpur": 0.9, "kolkata": 0.9, "darjeeling": 0.8,
-    "goa": 1.4, "panaji": 1.4, "varanasi": 0.7, "agra": 0.8, "amritsar": 0.8,
-    "kerala": 1.1, "karnataka": 1.3, "tamil nadu": 1.1, "maharashtra": 1.5,
-}
-
-# Fallback coordinates — prevents geocoding failures from wiping out a city
-KNOWN_CITIES = {
-    "kochi": {"name": "Kochi", "state": "Kerala", "country": "India", "lat": 9.9312, "lon": 76.2673},
-    "cochin": {"name": "Kochi", "state": "Kerala", "country": "India", "lat": 9.9312, "lon": 76.2673},
-    "munnar": {"name": "Munnar", "state": "Kerala", "country": "India", "lat": 10.0889, "lon": 77.0595},
-    "alleppey": {"name": "Alappuzha", "state": "Kerala", "country": "India", "lat": 9.4981, "lon": 76.3388},
-    "alappuzha": {"name": "Alappuzha", "state": "Kerala", "country": "India", "lat": 9.4981, "lon": 76.3388},
-    "trivandrum": {"name": "Thiruvananthapuram", "state": "Kerala", "country": "India", "lat": 8.5241, "lon": 76.9366},
-    "thekkady": {"name": "Thekkady", "state": "Kerala", "country": "India", "lat": 9.5850, "lon": 77.1588},
-    "bangalore": {"name": "Bengaluru", "state": "Karnataka", "country": "India", "lat": 12.9716, "lon": 77.5946},
-    "bengaluru": {"name": "Bengaluru", "state": "Karnataka", "country": "India", "lat": 12.9716, "lon": 77.5946},
-    "mumbai": {"name": "Mumbai", "state": "Maharashtra", "country": "India", "lat": 19.0760, "lon": 72.8777},
-    "delhi": {"name": "New Delhi", "state": "Delhi", "country": "India", "lat": 28.6139, "lon": 77.2090},
-    "new delhi": {"name": "New Delhi", "state": "Delhi", "country": "India", "lat": 28.6139, "lon": 77.2090},
-    "jaipur": {"name": "Jaipur", "state": "Rajasthan", "country": "India", "lat": 26.9124, "lon": 75.7873},
-    "agra": {"name": "Agra", "state": "Uttar Pradesh", "country": "India", "lat": 27.1767, "lon": 78.0081},
-    "udaipur": {"name": "Udaipur", "state": "Rajasthan", "country": "India", "lat": 24.5854, "lon": 73.7125},
-    "goa": {"name": "Panaji", "state": "Goa", "country": "India", "lat": 15.4909, "lon": 73.8278},
-    "panaji": {"name": "Panaji", "state": "Goa", "country": "India", "lat": 15.4909, "lon": 73.8278},
-    "kolkata": {"name": "Kolkata", "state": "West Bengal", "country": "India", "lat": 22.5726, "lon": 88.3639},
-    "chennai": {"name": "Chennai", "state": "Tamil Nadu", "country": "India", "lat": 13.0827, "lon": 80.2707},
-}
-
-STATE_TO_CITIES = {
-    "kerala": ["Kochi", "Munnar", "Alleppey"],
-    "rajasthan": ["Jaipur", "Udaipur", "Jodhpur"],
-    "punjab": ["Amritsar", "Chandigarh"],
-    "west bengal": ["Kolkata", "Darjeeling"],
-    "maharashtra": ["Mumbai", "Pune"],
-    "tamil nadu": ["Chennai", "Madurai"],
-    "karnataka": ["Bangalore", "Mysore"],
-    "goa": ["Panaji", "Calangute"],
-    "uttar pradesh": ["Agra", "Varanasi"],
-    "delhi": ["New Delhi"],
-}
-
-
-def get_cost_index(city_name: str) -> float:
-    return COST_INDEX.get(city_name.lower().strip(), 1.0)
-
-
 class ItineraryInput(BaseModel):
     destination: str
     days: int = Field(ge=1, le=14)
@@ -104,36 +50,42 @@ class ItineraryInput(BaseModel):
 # GEOCODING
 # ═══════════════════════════════════════════════════════════
 
-def _geocode_place(place_name: str) -> Optional[dict]:
-    key = place_name.lower().strip()
-    if key in KNOWN_CITIES:
-        return {"type": "city", **KNOWN_CITIES[key]}
 
+def _geocode_place(place_name: str) -> Optional[dict]:
+    """Resolve a destination dynamically using configured geocoding providers."""
+    query = " ".join(str(place_name or "").split())
+    if not query:
+        return None
+
+    # Geoapify is optional. Nominatim is the independent fallback.
     if settings.geoapify_api_key:
         try:
             with httpx.Client(timeout=10.0) as client:
-                res = client.get(
+                response = client.get(
                     GEOAPIFY_GEOCODE,
                     params={
-                        "text": place_name,
+                        "text": query,
                         "limit": 1,
                         "apiKey": settings.geoapify_api_key,
                     },
                 )
-                res.raise_for_status()
-                data = res.json()
+                response.raise_for_status()
+                data = response.json()
 
             features = data.get("features", []) if isinstance(data, dict) else []
             if features:
                 props = features[0].get("properties", {})
                 lat = float(props["lat"])
                 lon = float(props["lon"])
+
                 if -90 <= lat <= 90 and -180 <= lon <= 180:
                     return {
                         "name": str(
                             props.get("city")
+                            or props.get("town")
                             or props.get("county")
-                            or place_name
+                            or props.get("name")
+                            or query
                         ).strip(),
                         "state": str(props.get("state") or "").strip(),
                         "country": str(props.get("country") or "").strip(),
@@ -142,32 +94,46 @@ def _geocode_place(place_name: str) -> Optional[dict]:
                         "type": "city",
                         "source": "Geoapify",
                     }
-        except (httpx.HTTPError, KeyError, TypeError, ValueError, AttributeError):
+        except (
+            httpx.HTTPError,
+            KeyError,
+            TypeError,
+            ValueError,
+            AttributeError,
+        ):
             pass
 
     try:
-        candidates = geocoder().search(place_name, limit=5)
+        candidates = geocoder().search(query, limit=5)
     except Exception:
         return None
 
     accepted_types = {
-        "city", "town", "village", "municipality", "administrative"
+        "city",
+        "town",
+        "village",
+        "municipality",
+        "administrative",
     }
+
     for candidate in candidates:
         if str(candidate.get("type") or "").lower() not in accepted_types:
             continue
+
         try:
             lat = float(candidate["lat"])
             lon = float(candidate["lon"])
         except (KeyError, TypeError, ValueError):
             continue
-        if not (-90 <= lat <= 90 and -180 <= lon <= 180):
+
+        name = str(candidate.get("name") or "").strip()
+
+        if not name or not (-90 <= lat <= 90 and -180 <= lon <= 180):
             continue
-        if not str(candidate.get("name") or "").strip():
-            continue
+
         return {
             **candidate,
-            "name": str(candidate["name"]).strip(),
+            "name": name,
             "lat": lat,
             "lon": lon,
             "source": candidate.get("source") or "OpenStreetMap Nominatim",
@@ -175,67 +141,92 @@ def _geocode_place(place_name: str) -> Optional[dict]:
 
     return None
 
-def _geocode_destination(destination: str) -> tuple[list[dict], Optional[str]]:
-    """Resolve one destination or an explicitly separated multi-stop route.
 
-    Commas are not treated as route separators initially because they commonly
-    delimit administrative context (city, state, country). We first try the
-    complete place string, then fall back to comma-separated destinations only
-    when the complete string cannot be resolved.
-    """
+def _geocode_destination(destination: str) -> tuple[list[dict], Optional[str]]:
+    """Resolve destinations dynamically without hardcoded location mappings."""
     raw = str(destination or "").strip()
+
     if not raw:
         return [], "I couldn't verify a destination because none was provided."
 
-    # Explicit route language is unambiguous and should be split first.
-    route_parts = re.split(r"\s+and\s+|\s+to\s+|\s+covering\s+", raw, flags=re.IGNORECASE)
-    has_route_separator = len(route_parts) > 1
+    route_parts = re.split(
+        r"\s+and\s+|\s+to\s+|\s+covering\s+",
+        raw,
+        flags=re.IGNORECASE,
+    )
 
-    if not has_route_separator:
-        # Preserve administrative commas: e.g. "Jaipur, Rajasthan, India".
+    is_multi_stop = len(route_parts) > 1
+
+    if not is_multi_stop:
+        # Resolve the complete query first to preserve geographic context.
         whole_place = _geocode_place(raw)
         if whole_place:
             return [whole_place], None
 
-        # A comma list can still represent multiple destinations (e.g. Paris, Tokyo).
-        # Only use this fallback after the complete query fails.
-        candidates = [part.strip() for part in raw.split(",") if len(part.strip()) > 2]
+        candidates = [
+            part.strip()
+            for part in raw.split(",")
+            if len(part.strip()) > 2
+        ]
     else:
-        candidates = [part.strip() for part in route_parts if len(part.strip()) > 2]
+        candidates = [
+            part.strip()
+            for part in route_parts
+            if len(part.strip()) > 2
+        ]
 
     cities = []
     seen = set()
 
     for part in candidates:
-        key = part.lower().strip()
-        if key in STATE_TO_CITIES:
-            for city_name in STATE_TO_CITIES[key]:
-                if city_name.lower() not in seen:
-                    city = _geocode_place(city_name)
-                    if city:
-                        cities.append(city)
-                        seen.add(city_name.lower())
+        city = _geocode_place(part)
+
+        if not city:
             continue
 
-        city = _geocode_place(part)
-        if city and city.get("name", "").lower() not in seen:
-            cities.append(city)
-            seen.add(city.get("name", "").lower())
+        try:
+            name = str(city.get("name") or part).strip()
+            lat = float(city["lat"])
+            lon = float(city["lon"])
+
+            if not name or not (-90 <= lat <= 90 and -180 <= lon <= 180):
+                continue
+
+            # Identity is based on the resolved place name AND coordinates.
+            identity = (
+                name.casefold(),
+                round(lat, 5),
+                round(lon, 5),
+            )
+
+        except (KeyError, TypeError, ValueError):
+            continue
+
+        if identity in seen:
+            continue
+
+        cities.append({
+            **city,
+            "name": name,
+            "lat": lat,
+            "lon": lon,
+        })
+        seen.add(identity)
 
     if not cities:
-        return [], f"I couldn't verify the destination '{raw}'. Please provide a city or a more specific location."
+        return [], (
+            f"I couldn't verify the destination '{raw}'. "
+            "Please provide a city or a more specific location."
+        )
+
     return cities, None
 
-
-# ═══════════════════════════════════════════════════════════
-# PLACE FETCHING
-# ═══════════════════════════════════════════════════════════
-
 def _fetch_places(city: dict, categories: str, limit: int, radius_m: int) -> list[dict]:
+    """Fetch real places, preferring Geoapify and falling back to Overpass."""
     if settings.geoapify_api_key:
         try:
             with httpx.Client(timeout=15.0) as client:
-                res = client.get(
+                response = client.get(
                     GEOAPIFY_PLACES,
                     params={
                         "categories": categories,
@@ -244,20 +235,25 @@ def _fetch_places(city: dict, categories: str, limit: int, radius_m: int) -> lis
                         "apiKey": settings.geoapify_api_key,
                     },
                 )
-                res.raise_for_status()
-                data = res.json()
+                response.raise_for_status()
+                data = response.json()
 
             places = []
             features = data.get("features", []) if isinstance(data, dict) else []
+
             for feature in features:
                 props = feature.get("properties", {})
-                coords = feature.get("geometry", {}).get("coordinates", [])
+                geometry = feature.get("geometry", {}) or {}
+                coords = geometry.get("coordinates", [])
+
                 if not isinstance(coords, (list, tuple)) or len(coords) < 2:
                     continue
+
                 try:
                     lon, lat = float(coords[0]), float(coords[1])
                 except (TypeError, ValueError):
                     continue
+
                 if not (-90 <= lat <= 90 and -180 <= lon <= 180):
                     continue
 
@@ -270,9 +266,12 @@ def _fetch_places(city: dict, categories: str, limit: int, radius_m: int) -> lis
                     if fee is not None and str(fee).lower() in ("no", "false", "0")
                     else (str(fee) if fee is not None else None)
                 )
+
                 name = str(props.get("name") or "").strip()
                 if len(name) < 3:
                     continue
+
+                place_categories = props.get("categories") or []
 
                 places.append({
                     "name": name,
@@ -282,7 +281,7 @@ def _fetch_places(city: dict, categories: str, limit: int, radius_m: int) -> lis
                     "city": city["name"],
                     "lat": lat,
                     "lon": lon,
-                    "category": (props.get("categories") or [None])[0],
+                    "category": place_categories[0] if place_categories else None,
                     "opening_hours": str(
                         props.get("opening_hours") or ""
                     ).strip() or None,
@@ -296,9 +295,15 @@ def _fetch_places(city: dict, categories: str, limit: int, radius_m: int) -> lis
 
             if places:
                 return places[:limit]
+
         except (
-            httpx.HTTPError, KeyError, TypeError, ValueError, AttributeError
+            httpx.HTTPError,
+            KeyError,
+            TypeError,
+            ValueError,
+            AttributeError,
         ):
+            # Continue to the independent OpenStreetMap provider.
             pass
 
     kind = (
@@ -306,6 +311,7 @@ def _fetch_places(city: dict, categories: str, limit: int, radius_m: int) -> lis
         if "catering" in categories or "restaurant" in categories
         else "attraction"
     )
+
     try:
         places = places_provider().search(
             city,
@@ -313,11 +319,15 @@ def _fetch_places(city: dict, categories: str, limit: int, radius_m: int) -> lis
             limit=limit,
             radius_m=radius_m,
         )
-        for place in places:
-            place.setdefault("source", "OpenStreetMap")
-        return places[:limit]
-    except Exception:
-        return []
+    except Exception as exc:
+        raise RuntimeError(
+            f"Place discovery failed for {city.get('name', 'destination')}: {exc}"
+        ) from exc
+
+    for place in places:
+        place.setdefault("source", "OpenStreetMap")
+
+    return places[:limit]
 
 def _is_valid_place(place: dict) -> bool:
     """Lenient validation — only reject obvious commercial noise."""
@@ -746,74 +756,79 @@ class GenerateAdvancedItineraryTool(BaseTool):
             return ToolResult(success=False, message=f"Trip planning error: {exc}")
 
     def _compute_budget(self, params: ItineraryInput, cities: list[dict]) -> TripBudget:
+        """Return budget figures only when supported by price evidence."""
         travellers = max(1, params.travellers)
         nights = max(0, params.days - 1)
         rooms = math.ceil(travellers / 2)
-        idx = get_cost_index(cities[0]["name"])
 
         items = []
         excludes = []
 
         if len(cities) > 1:
             total_km = sum(
-                haversine_km(cities[i]["lat"], cities[i]["lon"], cities[i+1]["lat"], cities[i+1]["lon"])
+                haversine_km(
+                    cities[i]["lat"],
+                    cities[i]["lon"],
+                    cities[i + 1]["lat"],
+                    cities[i + 1]["lon"],
+                )
                 for i in range(len(cities) - 1)
             )
-            intercity = round(total_km * 1.5 * travellers)
-            items.append(BudgetItem(
-                category="Intercity transport",
-                amount=intercity,
-                classification="ESTIMATE",
-                note=f"~{total_km:.0f} km total",
-            ))
+            transport_note = (
+                f"Approximately {total_km:.0f} km straight-line distance; "
+                "no verified transport fare available."
+            )
         else:
-            items.append(BudgetItem(
-                category="Intercity transport",
-                amount=None,
-                classification="UNAVAILABLE",
-                note="Add origin city to enable.",
-            ))
-            excludes.append("Intercity transport")
+            transport_note = (
+                "No intercity route distance or verified transport fare available."
+            )
 
-        acc = round(BASE_ACCOM_PER_NIGHT * idx * nights * rooms)
-        food = round(BASE_FOOD_PER_DAY_PER_PERSON * idx * params.days * travellers)
-        local = round(BASE_LOCAL_PER_DAY * idx * params.days)
-        misc = round(BASE_MISC_PER_DAY * idx * params.days)
-
-        if nights > 0:
-            items.append(BudgetItem(
-                category="Accommodation",
-                amount=acc,
-                classification="ESTIMATE",
-                note=f"{nights} nights, {rooms} rooms",
-            ))
-        else:
-            items.append(BudgetItem(category="Accommodation", amount=0, classification="UNAVAILABLE", note="Day trip."))
-            excludes.append("Accommodation")
-
-        items.append(BudgetItem(category="Food", amount=food, classification="ESTIMATE"))
-        items.append(BudgetItem(category="Local transport", amount=local, classification="ESTIMATE"))
         items.append(BudgetItem(
-            category="Attraction entry fees",
+            category="Intercity transport",
             amount=None,
             classification="UNAVAILABLE",
-            note="Verify at venue.",
+            note=transport_note,
         ))
-        excludes.append("Attraction entry fees")
-        items.append(BudgetItem(category="Miscellaneous", amount=misc, classification="ESTIMATE"))
+        excludes.append("Intercity transport")
 
-        total = sum(i.amount for i in items if i.amount is not None)
-        remaining = (params.budget - total) if params.budget else None
+        accommodation_note = (
+            f"{nights} nights and {rooms} rooms; "
+            "no verified accommodation quote available."
+            if nights > 0
+            else "No overnight stay planned; accommodation cost not applicable."
+        )
+
+        items.append(BudgetItem(
+            category="Accommodation",
+            amount=None,
+            classification="UNAVAILABLE",
+            note=accommodation_note,
+        ))
+        excludes.append("Accommodation")
+
+        for category, note in (
+            ("Food", "No sourced meal prices available."),
+            ("Local transport", "No verified local transport fares available."),
+            ("Attraction entry fees", "Verify fees directly with the venue."),
+            ("Miscellaneous", "No sourced cost data available."),
+        ):
+            items.append(BudgetItem(
+                category=category,
+                amount=None,
+                classification="UNAVAILABLE",
+                note=note,
+            ))
+            excludes.append(category)
 
         return TripBudget(
             items=items,
             user_budget=params.budget,
             travellers=travellers,
-            total_estimate=round(total, 2) if total > 0 else None,
-            remaining=round(remaining, 2) if remaining is not None else None,
-            per_person=round(total / travellers, 2) if total else None,
+            total_estimate=None,
+            remaining=None,
+            per_person=None,
             excludes=excludes,
-            is_partial=bool(excludes),
+            is_partial=True,
         )
 
 

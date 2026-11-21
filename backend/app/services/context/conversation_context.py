@@ -8,6 +8,11 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from app.services.context.travel_mission import (
+    format_travel_mission_context,
+    update_travel_mission,
+)
+
 MAX_RECENT_MESSAGES = 8
 MAX_MESSAGE_CHARS = 500
 MAX_CONTEXT_CHARS = 2400
@@ -52,7 +57,8 @@ def update_conversation_context(conversation, user_text: str) -> dict[str, Any]:
     context["updated_turn_at"] = __import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat()
     state["conversation_context"] = context
     conversation.state_json = state
-    return state
+    update_travel_mission(conversation, user_text)
+    return dict(conversation.state_json or state)
 
 
 def build_conversation_context(conversation, latest_text: str = "", workflow=None) -> str:
@@ -63,6 +69,12 @@ def build_conversation_context(conversation, latest_text: str = "", workflow=Non
     entities = dict(task.get("entities") or {})
     if task.get("latest_user_message"):
         lines.append(f"Previous task request: {str(task['latest_user_message'])[:MAX_MESSAGE_CHARS]}")
+    mission_context = format_travel_mission_context(state.get("travel_mission"))
+    recalculation = state.get("last_travel_recalculation")
+    if isinstance(recalculation, dict):
+        lines.append("Latest travel evidence refresh: " + repr(recalculation)[:900])
+    if mission_context:
+        lines.append(mission_context)
     if entities:
         lines.append("Explicitly mentioned task details: " + repr(entities)[:700])
     messages = list(getattr(conversation, "messages", None) or [])

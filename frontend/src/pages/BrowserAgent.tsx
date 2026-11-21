@@ -70,7 +70,7 @@ function StepItem({ step }: { step: AgentStep }) {
     <article className="agent-step">
       <div className="agent-step-rail"><span className={step.status === 'failed' || step.status === 'denied' ? 'is-error' : ''}>{step.status === 'completed' ? <CheckCircle2 size={15}/> : <Circle size={15}/>}</span></div>
       <div className="agent-step-body">
-        <div className="agent-step-top"><strong>{step.action.replaceAll('_', ' ')}</strong><span>STEP {String(step.sequence).padStart(2, '0')}</span></div>
+        <div className="agent-step-top"><strong>{step.action.replace(/_/g, ' ')}</strong><span>STEP {String(step.sequence).padStart(2, '0')}</span></div>
         <p>{step.thought}</p>
         {step.details && step.action === 'read_page' && (() => {
           try {

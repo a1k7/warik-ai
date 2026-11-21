@@ -7,6 +7,9 @@ import {
 } from 'lucide-react';
 import { AIOrb } from './AIOrb';
 import { TripResultCard } from './components/TripResultCard';
+import { HotelResults } from './components/HotelResults';
+import { FlightResults } from './components/FlightResults';
+import { TravelRecalculationCard } from './components/TravelRecalculationCard';
 import { WorkflowCard } from './components/WorkflowCard';
 import { clsx } from 'clsx';
 import ReactMarkdown from 'react-markdown';
@@ -19,6 +22,146 @@ import { Conversation, Message } from './types';
 
 const ResultCards = ({ data }: { data: any }) => {
   if (!data) return null;
+
+  if (data.type === 'web_research') {
+    const sources = Array.isArray(data.sources) ? data.sources : [];
+    const safeUrl = (value: unknown): string | null => {
+      if (typeof value !== 'string') return null;
+      try {
+        const parsed = new URL(value);
+        return parsed.protocol === 'https:' || parsed.protocol === 'http:'
+          ? parsed.href
+          : null;
+      } catch {
+        return null;
+      }
+    };
+
+    return (
+      <div className="mt-4 w-full flex flex-col gap-3">
+        <div className="flex items-center justify-between gap-2">
+          <h3 className="text-sm font-bold text-white">
+            Research sources
+          </h3>
+          <span className="text-[10px] text-jmuted">
+            {sources.length} source{sources.length === 1 ? '' : 's'}
+          </span>
+        </div>
+
+        {data.status === 'retrieval_failed' && (
+          <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-3">
+            <p className="text-xs text-amber-200">
+              Webpage retrieval failed. These search destinations are not
+              verified evidence.
+            </p>
+          </div>
+        )}
+
+        {sources.length === 0 && (
+          <div className="rounded-xl border border-jmuted/20 bg-jcard p-3">
+            <p className="text-xs text-jmuted">
+              No source details were returned.
+            </p>
+          </div>
+        )}
+
+        {sources.map((source: any, index: number) => {
+          const url = safeUrl(source.url);
+          const retrieved = source.retrieved === true;
+
+          return (
+            <div
+              key={`${source.source_number ?? index}-${source.url ?? index}`}
+              className="rounded-xl border border-jprimary/20 bg-jcard p-4 flex flex-col gap-2"
+            >
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="text-[10px] text-jsecondary font-semibold">
+                    SOURCE {source.source_number ?? index + 1}
+                  </p>
+                  <h4 className="text-sm font-semibold text-white break-words mt-1">
+                    {source.title || source.domain || 'Untitled source'}
+                  </h4>
+                  {source.domain && (
+                    <p className="text-[11px] text-jmuted mt-1 break-all">
+                      {source.domain}
+                    </p>
+                  )}
+                </div>
+
+                <span
+                  className={`shrink-0 rounded-full px-2 py-1 text-[10px] font-semibold ${
+                    retrieved
+                      ? 'bg-emerald-500/10 text-emerald-300'
+                      : 'bg-amber-500/10 text-amber-300'
+                  }`}
+                >
+                  {retrieved ? 'Retrieved' : 'Not retrieved'}
+                </span>
+              </div>
+
+              <div className="flex flex-wrap gap-2 text-[10px] text-jmuted">
+                {source.source_category && (
+                  <span className="rounded bg-jbg px-2 py-1">
+                    {String(source.source_category).replace(/_/g, ' ')}
+                  </span>
+                )}
+                {source.retrieved_at && (
+                  <span className="rounded bg-jbg px-2 py-1">
+                    Retrieved: {String(source.retrieved_at)}
+                  </span>
+                )}
+              </div>
+
+              {Array.isArray(source.matched_queries) &&
+                source.matched_queries.length > 0 && (
+                  <div className="flex flex-wrap gap-1">
+                    {source.matched_queries.map((query: string, i: number) => (
+                      <span
+                        key={i}
+                        className="rounded bg-jprimary/10 px-2 py-1 text-[10px] text-jsecondary"
+                      >
+                        {query}
+                      </span>
+                    ))}
+                  </div>
+                )}
+
+              {source.retrieval_error && (
+                <p className="text-[11px] text-amber-300">
+                  {source.retrieval_error}
+                </p>
+              )}
+
+              {url ? (
+                <a
+                  href={url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="mt-1 inline-flex items-center gap-2 text-xs font-bold text-jsecondary hover:text-white transition-colors"
+                >
+                  Visit source <ExternalLink size={13} />
+                </a>
+              ) : (
+                <p className="text-[10px] text-jmuted">
+                  No valid HTTP(S) destination available.
+                </p>
+              )}
+            </div>
+          );
+        })}
+
+        <p className="text-[10px] text-jmuted">
+          Source categories and search relevance are descriptive metadata,
+          not independent guarantees of accuracy or trustworthiness.
+        </p>
+      </div>
+    );
+  }
+
+  if (data.type === 'travel_recalculation') {
+    return <TravelRecalculationCard data={data as any} />;
+  }
 
   if (data.type === 'trip_summary' || data.type === 'advanced_itinerary') {
     return <TripResultCard data={data as any} />;
@@ -50,11 +193,29 @@ const ResultCards = ({ data }: { data: any }) => {
     return (
       <div className="flex flex-col gap-3 mt-4 w-full">
         {data.search_context && (
-          <div className="bg-jprimary/10 border border-jprimary/30 rounded-lg p-2 text-xs text-jsecondary flex justify-between items-center">
-            <div className="flex items-center gap-2"><MapPin size={12} /><span><strong>{data.search_context.location}</strong></span></div>
+          <div className="bg-jprimary/10 border border-jprimary/30 rounded-lg p-3 text-xs text-jsecondary flex flex-col gap-2">
+            <div className="flex items-center gap-2">
+              <MapPin size={12} />
+              <strong>{data.search_context.location}</strong>
+            </div>
+            <p className="text-jmuted">
+              These are map-listed candidates, not confirmed matches.
+              Menu prices and dietary compatibility have not been verified.
+            </p>
+            {data.search_context.budget != null && (
+              <p className="text-jmuted">
+                Budget: {data.search_context.budget}. Budget fit is unverified.
+              </p>
+            )}
+            {Array.isArray(data.search_context.dietary_requirements) &&
+              data.search_context.dietary_requirements.length > 0 && (
+                <p className="text-jmuted">
+                  Dietary requirements: {data.search_context.dietary_requirements.join(', ')}
+                </p>
+              )}
           </div>
         )}
-        {data.items.map((item: any, idx: number) => (
+        {(Array.isArray(data.items) ? data.items : []).map((item: any, idx: number) => (
           <div key={idx} className="bg-jcard border border-jprimary/30 rounded-xl flex flex-col shadow-lg w-full overflow-hidden">
             <div className="flex items-center justify-between p-3 border-b border-jmuted/10 bg-jbg/50">
               <div className="flex items-center gap-3">
@@ -84,205 +245,11 @@ const ResultCards = ({ data }: { data: any }) => {
 
 
   if (data.type === 'hotel_list') {
-    const items = Array.isArray(data.items) ? data.items : [];
-
-    return (
-      <div className="flex flex-col gap-4 mt-4 w-full">
-        {data.live_inventory === false && (
-          <div className="bg-jcard border border-jprimary/30 rounded-xl p-4">
-            <div className="flex items-center gap-2 text-jsecondary text-sm font-bold">
-              <Building2 size={16} />
-              Live hotel inventory unavailable
-            </div>
-            <p className="text-xs text-jmuted mt-2">
-              Current hotel availability and prices need to be checked with the booking provider.
-            </p>
-          </div>
-        )}
-
-        {items.length > 0 ? (
-          items.map((item: any, idx: number) => (
-            <div
-              key={idx}
-              className="bg-jcard border border-jprimary/30 rounded-2xl overflow-hidden flex flex-col shadow-lg w-full"
-            >
-              <div className="p-4 flex flex-col gap-2">
-                <h3 className="font-bold text-white text-base">{item.name}</h3>
-                {item.address && (
-                  <p className="text-xs text-jmuted flex items-start gap-1">
-                    <MapPin size={14} />
-                    <span>{item.address}</span>
-                  </p>
-                )}
-                <div className="flex justify-between items-center mt-2 pt-3 border-t border-jmuted/10">
-                  <span className="text-sm font-bold text-jsecondary">
-                    {item.price_per_night || item.price || 'Price unavailable'}
-                    <span className="text-xs text-jmuted font-normal"> / night</span>
-                  </span>
-                  {item.booking_url && (
-                    <a
-                      href={item.booking_url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-xs font-bold text-white bg-jprimary hover:bg-jsecondary px-4 py-2 rounded-lg transition-colors flex items-center gap-2"
-                    >
-                      Book Now <ExternalLink size={12} />
-                    </a>
-                  )}
-                </div>
-                {item.total_stay && (
-                  <p className="text-xs text-jmuted">
-                    Total stay: {item.total_stay}
-                  </p>
-                )}
-              </div>
-            </div>
-          ))
-        ) : (
-          <div className="bg-jcard border border-jmuted/20 rounded-xl p-4">
-            <p className="text-sm text-white font-semibold">
-              No live hotel results are available.
-            </p>
-            <p className="text-xs text-jmuted mt-1">
-              Use the external search to check current availability and prices.
-            </p>
-          </div>
-        )}
-
-        {data.search_url && (
-          <a
-            href={data.search_url}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="flex items-center justify-center gap-2 rounded-xl bg-jprimary hover:bg-jsecondary text-white font-bold text-sm px-4 py-3 transition-colors"
-          >
-            Search hotels and prices <ExternalLink size={14} />
-          </a>
-        )}
-      </div>
-    );
+    return <HotelResults data={data} />;
   }
 
   if (data.type === 'flight_list') {
-    const items = Array.isArray(data.items) ? data.items : [];
-    const originAirport =
-      data.origin_airport || data.origin_airport_candidates?.[0];
-    const destinationAirport =
-      data.destination_airport || data.destination_airport_candidates?.[0];
-
-    return (
-      <div className="flex flex-col gap-3 mt-4 w-full">
-        {(originAirport || destinationAirport) && (
-          <div className="bg-jcard border border-jprimary/30 rounded-xl p-3">
-            <p className="text-[10px] uppercase tracking-wider text-jmuted mb-2">
-              Resolved airports
-            </p>
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <p className="text-xs text-jmuted">Departure</p>
-                <p className="text-sm font-bold text-white">
-                  {originAirport?.iata || '—'}
-                </p>
-                <p className="text-xs text-jsecondary">
-                  {originAirport?.name || 'Airport unavailable'}
-                </p>
-              </div>
-              <div>
-                <p className="text-xs text-jmuted">Destination</p>
-                <p className="text-sm font-bold text-white">
-                  {destinationAirport?.iata || '—'}
-                </p>
-                <p className="text-xs text-jsecondary">
-                  {destinationAirport?.name || 'Airport unavailable'}
-                </p>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {data.live_inventory === false && (
-          <div className="bg-jcard border border-jprimary/30 rounded-xl p-4">
-            <div className="flex items-center gap-2 text-jsecondary text-sm font-bold">
-              <Plane size={16} />
-              Live flight inventory unavailable
-            </div>
-            <p className="text-xs text-jmuted mt-2">
-              No live schedules or prices have been verified by this search.
-            </p>
-          </div>
-        )}
-
-        {items.length > 0 ? (
-          items.map((item: any, idx: number) => (
-            <div
-              key={idx}
-              className="bg-jcard border border-jmuted/20 rounded-xl p-4 flex flex-col gap-2 w-full"
-            >
-              <div className="flex justify-between items-center">
-                <h4 className="font-bold text-white text-sm flex items-center gap-2">
-                  <Plane size={16} className="text-jprimary" />
-                  {item.segments?.[0]?.airline || 'Flight'}
-                </h4>
-                <span className="text-xs font-bold text-jsecondary bg-jprimary/10 px-2 py-1 rounded">
-                  {item.price || 'Price unavailable'}
-                </span>
-              </div>
-
-              <div className="flex flex-col gap-2">
-                {item.segments?.map((seg: any, i: number) => (
-                  <div
-                    key={i}
-                    className="flex justify-between text-xs text-jmuted mt-1"
-                  >
-                    <span>{seg.origin} {seg.departure}</span>
-                    <span>→</span>
-                    <span>{seg.destination} {seg.arrival}</span>
-                  </div>
-                ))}
-              </div>
-
-              <div className="flex justify-between items-center mt-2 pt-2 border-t border-jmuted/10">
-                {item.url && (
-                  <a
-                    href={item.url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-xs font-bold text-white bg-jprimary hover:bg-jsecondary px-3 py-1.5 rounded flex items-center gap-2"
-                  >
-                    Book Flight <ExternalLink size={12} />
-                  </a>
-                )}
-                {typeof item.stops === 'number' && (
-                  <span className="text-xs text-jmuted">
-                    {item.stops === 0 ? 'Non-stop' : `${item.stops} stop(s)`}
-                  </span>
-                )}
-              </div>
-            </div>
-          ))
-        ) : (
-          <div className="bg-jcard border border-jmuted/20 rounded-xl p-4">
-            <p className="text-sm text-white font-semibold">
-              No live flight options are available.
-            </p>
-            <p className="text-xs text-jmuted mt-1">
-              Search externally for current routes, schedules and fares.
-            </p>
-          </div>
-        )}
-
-        {data.search_url && (
-          <a
-            href={data.search_url}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="flex items-center justify-center gap-2 rounded-xl bg-jprimary hover:bg-jsecondary text-white font-bold text-sm px-4 py-3 transition-colors"
-          >
-            Search flights and prices <ExternalLink size={14} />
-          </a>
-        )}
-      </div>
-    );
+    return <FlightResults data={data} />;
   }
 
   return null;

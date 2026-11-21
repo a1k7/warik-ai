@@ -8,8 +8,10 @@ import shutil
 import re
 import math
 
-from urllib.parse import quote_plus, quote
+from urllib.parse import quote_plus, quote, urlparse
 from typing import Optional
+
+from app.integrations.serpapi.client import SerpApiError, serpapi_client
 from datetime import datetime
 
 from pydantic import BaseModel, Field
@@ -169,9 +171,190 @@ def haversine_km(lat1, lon1, lat2, lon2):
 
 
 class FlightInput(BaseModel):
-    origin: str = Field(...)
-    destination: str = Field(...)
+    """Validated flight search constraints passed to Google Flights/SerpApi."""
+
+    origin: str = Field(..., min_length=2, max_length=120)
+    destination: str = Field(..., min_length=2, max_length=120)
     date: str = Field(...)
+    adults: int = Field(default=1, ge=1, le=9)
+    children: int = Field(default=0, ge=0, le=8)
+    # SerpApi Google Flights cabin values: 1 economy, 2 premium economy,
+    # 3 business, 4 first.
+    travel_class: int = Field(default=1, ge=1, le=4)
+    # Maximum number of stops accepted by the user: 0, 1, or 2.
+    max_stops: int | None = Field(default=None, ge=0, le=2)
+    currency: str = Field(default="INR", min_length=3, max_length=3, pattern=r"^[A-Za-z]{3}$")
+    outbound_times: str | None = Field(
+        default=None,
+        pattern=r"^(?:[0-9]|1[0-9]|2[0-3]),(?:[0-9]|1[0-9]|2[0-3])(?:,(?:[0-9]|1[0-9]|2[0-3]),(?:[0-9]|1[0-9]|2[0-3]))?$",
+    )
+    # Retain compatibility with mission extraction and older callers.
+    direct_only: bool | None = None
+
+
+
+def _normalise_serpapi_flights(
+    payload: dict,
+    origin_iata: str,
+    destination_iata: str,
+    fallback_url: str,
+) -> tuple[list[dict], str]:
+    """Normalize only price-bearing itineraries with a verified airport chain."""
+    metadata = payload.get("search_metadata") or {}
+    search_parameters = payload.get("search_parameters") or {}
+    provider_url = metadata.get("google_flights_url")
+    parsed_url = urlparse(provider_url or "")
+    search_url = (
+        provider_url
+        if parsed_url.scheme == "https"
+        and parsed_url.hostname in {"google.com", "www.google.com"}
+        else fallback_url
+    )
+
+    def airport_codes(value: str) -> set[str]:
+        return {
+            token.strip().upper()
+            for token in str(value or "").split(",")
+            if len(token.strip()) == 3 and token.strip().isalpha()
+        }
+
+    requested_origins = airport_codes(origin_iata)
+    requested_destinations = airport_codes(destination_iata)
+    currency = str(search_parameters.get("currency") or "INR").upper().strip()
+    if not currency or len(currency) != 3 or not currency.isalpha():
+        currency = "INR"
+    retrieved_at = metadata.get("created_at")
+    candidates = (
+        (payload.get("best_flights") or [])
+        + (payload.get("other_flights") or [])
+    )
+
+    structured: list[dict] = []
+    seen: set[tuple] = set()
+    for flight in candidates:
+        if not isinstance(flight, dict):
+            continue
+        raw_segments = flight.get("flights") or []
+        if not isinstance(raw_segments, list) or not raw_segments:
+            continue
+
+        chain: list[dict] = []
+        valid_chain = True
+        for raw_segment in raw_segments:
+            if not isinstance(raw_segment, dict):
+                valid_chain = False
+                break
+            departure_airport = raw_segment.get("departure_airport") or {}
+            arrival_airport = raw_segment.get("arrival_airport") or {}
+            origin_code = str(departure_airport.get("id") or "").strip().upper()
+            destination_code = str(arrival_airport.get("id") or "").strip().upper()
+            if (
+                len(origin_code) != 3 or not origin_code.isalpha()
+                or len(destination_code) != 3 or not destination_code.isalpha()
+            ):
+                valid_chain = False
+                break
+            chain.append({
+                "airline": raw_segment.get("airline") or "Unknown",
+                "flight_number": raw_segment.get("flight_number") or "N/A",
+                "origin": origin_code,
+                "destination": destination_code,
+                "departure": str(departure_airport.get("time") or "").replace("T", " ")[:16],
+                "arrival": str(arrival_airport.get("time") or "").replace("T", " ")[:16],
+                "duration_minutes": raw_segment.get("duration"),
+            })
+
+        if not valid_chain or not chain:
+            continue
+        if chain[0]["origin"] not in requested_origins:
+            continue
+        if chain[-1]["destination"] not in requested_destinations:
+            continue
+        # Every connecting segment must depart from the prior segment's
+        # arrival airport. This rejects stitched or disconnected itineraries.
+        if any(
+            chain[index - 1]["destination"] != chain[index]["origin"]
+            for index in range(1, len(chain))
+        ):
+            continue
+
+        try:
+            raw_price = float(flight.get("price"))
+        except (TypeError, ValueError):
+            continue
+        if not (raw_price > 0 and math.isfinite(raw_price)):
+            continue
+
+        identity = (
+            tuple((item["origin"], item["destination"], item["flight_number"], item["departure"]) for item in chain),
+            raw_price,
+            currency,
+        )
+        if identity in seen:
+            continue
+        seen.add(identity)
+
+        raw_layovers = flight.get("layovers") or []
+        layovers = []
+        if isinstance(raw_layovers, list):
+            for stop in raw_layovers:
+                if not isinstance(stop, dict):
+                    continue
+                layovers.append({
+                    "id": str(stop.get("id") or "").upper() or None,
+                    "name": stop.get("name"),
+                    "duration": stop.get("duration"),
+                })
+
+        structured.append({
+            "price": format_price(raw_price, currency),
+            "price_amount": raw_price,
+            "currency": currency,
+            "segments": chain,
+            "stops": len(chain) - 1,
+            "layovers": layovers,
+            "url": search_url,
+            "provider": "serpapi_google_flights",
+            "source": "Google Flights via SerpApi",
+            "retrieved_at": retrieved_at,
+        })
+
+    # Numeric sorting is essential: lexical sorting misorders e.g. 150,000
+    # and 25,000 when display strings contain currency symbols and separators.
+    structured.sort(key=lambda item: item["price_amount"])
+    return structured[:10], search_url
+
+
+
+def _serpapi_flight_search_params(params: FlightInput, origin_iata: str, dest_iata: str) -> dict:
+    """Build SerpApi parameters from the validated FlightInput contract."""
+    if params.max_stops is not None:
+        # SerpApi: 1=nonstop, 2=up to one stop, 3=up to two stops.
+        stops = str(params.max_stops + 1)
+    elif params.direct_only is False:
+        # Legacy explicit opt-in: allow any number of stops.
+        stops = "0"
+    else:
+        stops = "1"
+
+    request = {
+        "engine": "google_flights",
+        "departure_id": origin_iata,
+        "arrival_id": dest_iata,
+        "outbound_date": params.date,
+        "type": "2",
+        "stops": stops,
+        "sort_by": "2",
+        "currency": params.currency.upper(),
+        "gl": "in",
+        "hl": "en",
+        "adults": str(params.adults),
+        "children": str(params.children),
+        "travel_class": str(params.travel_class),
+    }
+    if params.outbound_times:
+        request["outbound_times"] = params.outbound_times
+    return request
 
 
 class RealFlightSearchTool(BaseTool):
@@ -190,6 +373,11 @@ class RealFlightSearchTool(BaseTool):
 
     provider_adapters = (
         {
+            "provider_id": "serpapi_google_flights",
+            "display_name": "SerpApi Google Flights",
+            "requires_auth": True,
+        },
+        {
             "provider_id": "trvl_cli",
             "display_name": "TRVL CLI adapter",
         },
@@ -197,11 +385,7 @@ class RealFlightSearchTool(BaseTool):
 
     supported_operations = ("search",)
 
-    def execute(
-        self,
-        ctx: ToolContext,
-        params: FlightInput,
-    ) -> ToolResult:
+    def execute(self, ctx: ToolContext, params: FlightInput, *, provider_id: str | None = None) -> ToolResult:
 
         try:
             origin_airports = resolve_airport_candidates(params.origin)
@@ -288,6 +472,87 @@ class RealFlightSearchTool(BaseTool):
                 },
             )
 
+        # Prefer live Google Flights via SerpApi. If unavailable, retain
+        # the existing TRVL CLI fallback below.
+        serpapi_error = None
+        if provider_id != "trvl_cli":
+            try:
+                serpapi_payload = serpapi_client.search(_serpapi_flight_search_params(params, origin_iata, dest_iata))
+
+                structured, search_url = _normalise_serpapi_flights(
+                    serpapi_payload,
+                    origin_iata,
+                    dest_iata,
+                    _flight_search_url(params),
+                )
+
+                if not structured:
+                    return ToolResult(
+                        success=True,
+                        message=(
+                            f"No verified flights were returned from "
+                            f"{origin_iata} to {dest_iata} for {params.date}. "
+                            "You can check other options using the external search."
+                        ),
+                        data={
+                            "type": "flight_list",
+                            "items": [],
+                            "search_url": search_url,
+                            "live_inventory": True,
+                            "resolution_status": "no_results",
+                            "provider": "serpapi_google_flights",
+                        "retrieved_at": (serpapi_payload.get("search_metadata") or {}).get("created_at"),
+                        "provider_metadata": {
+                            "search_id": (serpapi_payload.get("search_metadata") or {}).get("id"),
+                            "status": (serpapi_payload.get("search_metadata") or {}).get("status"),
+                            "created_at": (serpapi_payload.get("search_metadata") or {}).get("created_at"),
+                            "google_flights_url": search_url,
+                        },
+                            "origin_airport": origin_airports[0],
+                            "destination_airport": destination_airports[0],
+                            "origin_airport_candidates": origin_airports,
+                            "destination_airport_candidates": destination_airports,
+                        },
+                    )
+
+                return ToolResult(
+                    success=True,
+                    message=f"Found {len(structured)} live flight option(s) via Google Flights.",
+                    data={
+                        "type": "flight_list",
+                        "items": structured,
+                        "search_url": search_url,
+                        "live_inventory": True,
+                        "resolution_status": "success",
+                        "provider": "serpapi_google_flights",
+                        "retrieved_at": (serpapi_payload.get("search_metadata") or {}).get("created_at"),
+                        "provider_metadata": {
+                            "search_id": (serpapi_payload.get("search_metadata") or {}).get("id"),
+                            "status": (serpapi_payload.get("search_metadata") or {}).get("status"),
+                            "created_at": (serpapi_payload.get("search_metadata") or {}).get("created_at"),
+                            "google_flights_url": search_url,
+                        },
+                        "origin_airport": origin_airports[0],
+                        "destination_airport": destination_airports[0],
+                        "origin_airport_candidates": origin_airports,
+                        "destination_airport_candidates": destination_airports,
+                    },
+                )
+
+            except SerpApiError as exc:
+                serpapi_error = str(exc)
+
+            except Exception as exc:
+                # Do not let an unexpected adapter error break the existing fallback.
+                serpapi_error = f"SerpApi adapter error ({type(exc).__name__})."
+
+        if provider_id == "serpapi_google_flights":
+            return ToolResult(
+                success=False,
+                message="The explicitly selected SerpApi flight search failed; no other provider was substituted.",
+                data={"type": "flight_list", "items": [], "provider": "serpapi_google_flights", "live_inventory": False, "resolution_status": "provider_unavailable"},
+            )
+
         if not shutil.which("trvl"):
             search_query = (
                 f"Flights from {params.origin.strip()} "
@@ -300,15 +565,17 @@ class RealFlightSearchTool(BaseTool):
             return ToolResult(
                 success=True,
                 message=(
-                    "Live flight inventory is unavailable in this "
-                    "deployment. Use the flight search link to check "
-                    "current schedules and prices."
+                    "Live flight providers could not complete the search. "
+                    "Use the external search link to check current schedules "
+                    "and prices."
                 ),
                 data={
                     "type": "flight_list",
                     "items": [],
                     "search_url": search_url,
                     "live_inventory": False,
+                    "resolution_status": "provider_unavailable",
+                    "provider_error": serpapi_error,
                 },
             )
 
@@ -416,6 +683,7 @@ class RealFlightSearchTool(BaseTool):
                         "arrival": leg.get(
                             "arrival_time", ""
                         ).replace("T", " ")[:16],
+                        "duration_minutes": leg.get("duration_minutes") or leg.get("duration"),
                     }
                     for leg in legs
                 ]
@@ -435,6 +703,7 @@ class RealFlightSearchTool(BaseTool):
                         "currency": raw_cur or None,
                         "segments": segments,
                         "stops": len(segments) - 1,
+                        "duration_minutes": flight.get("duration_minutes") or flight.get("duration"),
                         "url": booking_url,
                     }
                 )
@@ -475,6 +744,20 @@ class RealFlightSearchTool(BaseTool):
                     "destination_airport_candidates": destination_airports,
                 },
             )
+
+    def execute_for_provider(self, ctx: ToolContext, params: FlightInput, provider_id: str) -> ToolResult:
+        """Execute only the explicitly selected flight provider."""
+        if provider_id not in {"serpapi_google_flights", "trvl_cli"}:
+            return ToolResult(False, f"Unsupported flight provider: {provider_id}", {"live_inventory": False})
+        result = self.execute(ctx, params, provider_id=provider_id)
+        data = dict(result.data or {})
+        if result.success and data.get("live_inventory") is False and not data.get("items"):
+            return ToolResult(False, f"Selected provider {provider_id} returned no live inventory.", data)
+        if result.success:
+            # Provider payload identity wins only when it matches the pinned adapter.
+            data["provider"] = provider_id
+            result.data = data
+        return result
 
 
 # ─── HOTELS ────────────────────────────────────────────────
@@ -526,18 +809,19 @@ class StayApiHotelTool(BaseTool):
 
     provider_adapters = (
         {
+            "provider_id": "stayapi_booking",
+            "display_name": "StayAPI hotel inventory",
+            "requires_auth": True,
+        },
+        {
             "provider_id": "trvl_cli",
-            "display_name": "TRVL CLI adapter",
+            "display_name": "TRVL CLI fallback",
         },
     )
 
     supported_operations = ("search",)
 
-    def execute(
-        self,
-        ctx: ToolContext,
-        params: HotelInput,
-    ) -> ToolResult:
+    def execute(self, ctx: ToolContext, params: HotelInput, *, provider_id: str | None = None) -> ToolResult:
 
         # Validate stay dates before making any external provider call.
         try:
@@ -575,6 +859,115 @@ class StayApiHotelTool(BaseTool):
             )
 
         cli_city = normalize_cli_city(params.city)
+
+        # Prefer direct StayAPI inventory when configured. The existing TRVL CLI
+        # remains a fallback, so this does not remove any current provider path.
+        from app.core.config import settings
+        from app.integrations.stayapi.client import StayAPIClient, StayAPIError
+
+        stayapi_key = str(getattr(settings, "stayapi_key", "") or "").strip()
+        if provider_id == "stayapi_booking" and not stayapi_key:
+            return ToolResult(
+                success=False,
+                message="StayAPI was selected, but its API key is not configured.",
+                data={"type": "hotel_list", "items": [], "provider": "stayapi_booking", "live_inventory": False, "resolution_status": "provider_unavailable"},
+            )
+        if provider_id != "trvl_cli" and stayapi_key:
+            try:
+                stayapi_result = StayAPIClient(
+                    stayapi_key,
+                    timeout_seconds=25.0,
+                ).search_hotels(
+                    city=params.city,
+                    check_in=params.check_in,
+                    check_out=params.check_out,
+                    adults=max(1, params.travellers),
+                    rooms=1,
+                    currency="INR",
+                    language="en-us",
+                    market="IN",
+                    limit=25,
+                )
+                stayapi_items = stayapi_result["items"]
+                excluded_stayapi = 0
+                if params.budget is not None:
+                    filtered = []
+                    for item in stayapi_items:
+                        amount_inr = item.get("total_inr")
+                        if amount_inr is not None and amount_inr > params.budget:
+                            excluded_stayapi += 1
+                            continue
+                        filtered.append(item)
+                    stayapi_items = filtered
+
+                if stayapi_items:
+                    top = stayapi_items[:5]
+                    for item in top:
+                        amount = item.get("total_stay_amount")
+                        currency = item.get("currency") or "INR"
+                        if amount is not None:
+                            item["total_stay"] = format_price(float(amount), currency)
+                            item["price_per_night_display"] = format_price(
+                                float(amount) / max(1, item.get("nights", 1)), currency
+                            )
+                    return ToolResult(
+                        success=True,
+                        message=(
+                            f"Found {len(top)} live StayAPI hotel option(s) in {params.city}. "
+                            "Prices are provider-reported total-stay amounts; verify the final rate and taxes before booking."
+                        ),
+                        data={
+                            "type": "hotel_list",
+                            "items": top,
+                            "provider": "stayapi_booking",
+                            "live_inventory": True,
+                            "retrieved_at": stayapi_result.get("retrieved_at"),
+                            "destination": stayapi_result.get("destination"),
+                            "pagination": stayapi_result.get("pagination"),
+                            "price_basis": "provider_min_total_price",
+                            "excluded_over_budget_inr": excluded_stayapi,
+                        },
+                    )
+                if stayapi_result["items"] and excluded_stayapi:
+                    return ToolResult(
+                        success=True,
+                        message=(
+                            f"StayAPI returned {excluded_stayapi} hotel(s), but all exceeded "
+                            f"your INR {params.budget:,.0f} total-stay budget."
+                        ),
+                        data={
+                            "type": "hotel_list",
+                            "items": [],
+                            "provider": "stayapi_booking",
+                            "live_inventory": True,
+                            "resolution_status": "budget_filtered",
+                            "excluded_over_budget_inr": excluded_stayapi,
+                            "search_url": _hotel_search_url(params),
+                        },
+                    )
+                if not stayapi_result["items"]:
+                    return ToolResult(
+                        success=True,
+                        message=f"StayAPI returned no available hotel results in {params.city} for those dates.",
+                        data={
+                            "type": "hotel_list",
+                            "items": [],
+                            "provider": "stayapi_booking",
+                            "live_inventory": True,
+                            "resolution_status": "no_results",
+                            "retrieved_at": stayapi_result.get("retrieved_at"),
+                            "search_url": _hotel_search_url(params),
+                        },
+                    )
+            except (StayAPIError, ValueError) as exc:
+                if provider_id == "stayapi_booking":
+                    return ToolResult(
+                        success=False,
+                        message=f"Selected StayAPI search failed: {type(exc).__name__}.",
+                        data={"type": "hotel_list", "items": [], "provider": "stayapi_booking", "live_inventory": False, "resolution_status": "provider_unavailable"},
+                    )
+                # Preserve legacy fallback only for non-pinned direct execution.
+                pass
 
         if not shutil.which("trvl"):
             search_url = (
@@ -841,6 +1234,24 @@ class StayApiHotelTool(BaseTool):
             },
         )
 
+    def execute_for_provider(self, ctx: ToolContext, params: HotelInput, provider_id: str) -> ToolResult:
+        """Execute only the explicitly selected hotel provider; never cross-fallback."""
+        if provider_id not in {"stayapi_booking", "trvl_cli"}:
+            return ToolResult(False, f"Unsupported hotel provider: {provider_id}", {"live_inventory": False})
+        result = self.execute(ctx, params, provider_id=provider_id)
+        data = dict(result.data or {})
+        if result.success and data.get("live_inventory") is False and not data.get("items"):
+            return ToolResult(False, f"Selected provider {provider_id} returned no live inventory.", data)
+        if result.success:
+            data.setdefault("provider", provider_id)
+            # The legacy TRVL success payload did not set this field consistently.
+            # A successful, parsed TRVL CLI response (including a genuine no-results
+            # response) is a live inventory search; explicit False is preserved.
+            if provider_id == "trvl_cli":
+                data.setdefault("live_inventory", True)
+            result.data = data
+        return result
+
 
 # ─── GEOAPIFY PLACES ───────────────────────────────────────
 
@@ -851,14 +1262,12 @@ class PlacesInput(BaseModel):
     query: Optional[str] = Field(default=None)
 
 
+
 class GeoapifyPlacesTool(BaseTool):
     name = "search_places_geoapify"
-
-    description = "Find real places and restaurants via Geoapify."
-
+    description = "Find real places and restaurants using Geoapify or OpenStreetMap."
     input_schema = PlacesInput
     requires_confirmation = False
-
     capability = "place_discovery"
 
     provider_adapters = (
@@ -875,13 +1284,6 @@ class GeoapifyPlacesTool(BaseTool):
         ctx: ToolContext,
         params: PlacesInput,
     ) -> ToolResult:
-
-        if not settings.geoapify_api_key:
-            return ToolResult(
-                success=False,
-                message="Missing API Key",
-            )
-
         final_location = params.location or params.query
 
         if not final_location:
@@ -890,92 +1292,200 @@ class GeoapifyPlacesTool(BaseTool):
                 message="Specify a location.",
             )
 
-        try:
-            geo_url = (
-                "https://api.geoapify.com/v1/geocode/search?"
-                f"text={quote(final_location)}"
-                f"&limit=1&apiKey={settings.geoapify_api_key}"
-            )
+        category = (params.category or "").lower()
+        kind = (
+            "restaurant"
+            if any(word in category for word in ("restaurant", "cafe", "food"))
+            else "attraction"
+        )
 
-            with httpx.Client(timeout=10.0) as client:
-                geo_res = client.get(geo_url).json()
-
-                if not geo_res.get("features"):
-                    return ToolResult(
-                        success=False,
-                        message=(
-                            f"Location '{final_location}' not found."
-                        ),
+        # Geoapify is optional and preferred when configured.
+        if settings.geoapify_api_key:
+            try:
+                with httpx.Client(timeout=10.0) as client:
+                    geo_response = client.get(
+                        "https://api.geoapify.com/v1/geocode/search",
+                        params={
+                            "text": final_location,
+                            "limit": 1,
+                            "apiKey": settings.geoapify_api_key,
+                        },
                     )
+                    geo_response.raise_for_status()
+                    geo_data = geo_response.json()
 
-                feature = geo_res["features"][0]
+                    features = geo_data.get("features", [])
+                    if features:
+                        props = features[0].get("properties", {})
+                        lat = float(props["lat"])
+                        lon = float(props["lon"])
 
-                lat = feature["properties"]["lat"]
-                lon = feature["properties"]["lon"]
+                        if -90 <= lat <= 90 and -180 <= lon <= 180:
+                            city_name = (
+                                props.get("city")
+                                or props.get("name")
+                                or final_location
+                            )
 
-                city_name = feature["properties"].get(
-                    "city",
-                    final_location,
-                )
+                            if kind == "restaurant":
+                                cat = (
+                                    "catering.cafe"
+                                    if "cafe" in category
+                                    else "catering.restaurant"
+                                )
+                            else:
+                                cat = "tourism.attraction"
 
-                cat = (
-                    "catering.cafe"
-                    if "cafe" in params.category.lower()
-                    else "catering.restaurant"
-                )
+                            places_response = client.get(
+                                "https://api.geoapify.com/v2/places",
+                                params={
+                                    "categories": cat,
+                                    "filter": f"circle:{lon},{lat},10000",
+                                    "limit": 10,
+                                    "apiKey": settings.geoapify_api_key,
+                                },
+                            )
+                            places_response.raise_for_status()
+                            places_data = places_response.json()
 
-                places_url = (
-                    "https://api.geoapify.com/v2/places?"
-                    f"categories={cat}"
-                    f"&filter=circle:{lon},{lat},10000"
-                    "&limit=10"
-                    f"&apiKey={settings.geoapify_api_key}"
-                )
+                            valid_places = []
+                            for place in places_data.get("features", []):
+                                properties = place.get("properties", {})
+                                name = str(properties.get("name") or "").strip()
 
-                places_res = client.get(places_url).json()
+                                if not name:
+                                    continue
 
-            valid_places = [
-                {
-                    "name": place["properties"].get(
-                        "name",
-                        "Unknown",
-                    ),
-                    "address": place["properties"].get(
-                        "address_line2",
-                        "",
-                    ),
-                    "map_url": (
-                        "https://maps.google.com/?q="
-                        + quote(
-                            place["properties"].get("name", "")
-                        )
-                    ),
-                }
-                for place in places_res.get("features", [])
-                if place["properties"].get("name")
-            ]
+                                valid_places.append({
+                                    "name": name,
+                                    "address": (
+                                        properties.get("address_line2")
+                                        or properties.get("formatted")
+                                        or ""
+                                    ),
+                                    "map_url": (
+                                        "https://maps.google.com/?q=" + quote(name)
+                                    ),
+                                    "source": "Geoapify",
+                                })
 
-            if not valid_places:
-                return ToolResult(
-                    success=True,
-                    message="No places found.",
-                )
+                            if valid_places:
+                                return ToolResult(
+                                    success=True,
+                                    message=f"Places found in {city_name}.",
+                                    data={
+                                        "type": "place_list",
+                                        "items": valid_places[:5],
+                                        "city": city_name,
+                                        "source": "Geoapify",
+                                    },
+                                )
 
-            return ToolResult(
-                success=True,
-                message=f"Top places in {city_name}.",
-                data={
-                    "type": "place_list",
-                    "items": valid_places[:5],
-                    "city": city_name,
-                },
-            )
+            except (
+                httpx.HTTPError,
+                KeyError,
+                TypeError,
+                ValueError,
+                AttributeError,
+            ):
+                # Try OpenStreetMap instead of failing on Geoapify errors.
+                pass
 
-        except Exception as e:
+        # Resolve the location independently through Nominatim.
+        try:
+            candidates = geocoder().search(final_location, limit=5)
+        except Exception as exc:
             return ToolResult(
                 success=False,
-                message=f"Search error: {e}",
+                message=f"Location geocoding provider unavailable: {exc}",
             )
+
+        accepted_types = {
+            "city",
+            "town",
+            "village",
+            "municipality",
+            "administrative",
+        }
+        resolved = None
+
+        for candidate in candidates:
+            if str(candidate.get("type") or "").lower() not in accepted_types:
+                continue
+
+            try:
+                lat = float(candidate["lat"])
+                lon = float(candidate["lon"])
+            except (KeyError, TypeError, ValueError):
+                continue
+
+            if not (-90 <= lat <= 90 and -180 <= lon <= 180):
+                continue
+
+            resolved = candidate
+            break
+
+        if resolved is None:
+            return ToolResult(
+                success=False,
+                message=f"Could not verify location: {final_location}.",
+            )
+
+        # Search OpenStreetMap for real provider records.
+        try:
+            places = places_provider().search(
+                resolved,
+                kind=kind,
+                limit=10,
+                radius_m=10000,
+            )
+        except Exception as exc:
+            return ToolResult(
+                success=False,
+                message=f"Place discovery provider unavailable: {exc}",
+            )
+
+        valid_places = []
+
+        for place in places:
+            name = str(place.get("name") or "").strip()
+            if not name:
+                continue
+
+            item = {
+                **place,
+                "name": name,
+            }
+
+            lat = place.get("lat")
+            lon = place.get("lon")
+
+            if lat is not None and lon is not None:
+                item["map_url"] = (
+                    f"https://www.openstreetmap.org/?mlat={lat}"
+                    f"&mlon={lon}#map=16/{lat}/{lon}"
+                )
+            else:
+                item["map_url"] = "https://www.openstreetmap.org/"
+
+            valid_places.append(item)
+
+        city_name = resolved.get("name") or final_location
+
+        return ToolResult(
+            success=True,
+            message=(
+                f"Places found in {city_name}."
+                if valid_places
+                else f"No places found in {city_name}."
+            ),
+            data={
+                "type": "place_list",
+                "items": valid_places[:5],
+                "city": city_name,
+                "source": "OpenStreetMap",
+            },
+        )
 
 
 # ─── CAB ────────────────────────────────────────────────────

@@ -1,6 +1,7 @@
 from unittest.mock import MagicMock
 
 from app.agents.workflow_engine import WorkflowEngine
+from .schema_fixtures import valid_required_tool_params
 from app.tools.trip_summary_tool import (
     CompileTripSummaryInput,
     CompileTripSummaryTool,
@@ -17,7 +18,7 @@ def make_workflow():
         {
             "id": "itinerary",
             "tool": "generate_advanced_itinerary",
-            "params": {},
+            "params": valid_required_tool_params("generate_advanced_itinerary"),
             "depends_on": [],
             "status": "PENDING",
             "required": True,
@@ -27,7 +28,7 @@ def make_workflow():
         {
             "id": "flight",
             "tool": "search_flights_real",
-            "params": {},
+            "params": valid_required_tool_params("search_flights_real"),
             "depends_on": [],
             "status": "PENDING",
             "required": False,
@@ -37,7 +38,7 @@ def make_workflow():
         {
             "id": "cab",
             "tool": "get_cab_links",
-            "params": {},
+            "params": valid_required_tool_params("get_cab_links"),
             "depends_on": [],
             "status": "PENDING",
             "required": False,
@@ -47,7 +48,7 @@ def make_workflow():
         {
             "id": "summary",
             "tool": "compile_trip_summary",
-            "params": {"destination": "Kochi, Munnar, Alleppey"},
+            "params": valid_required_tool_params("compile_trip_summary"),
             "depends_on": ["itinerary", "flight", "cab"],
             "status": "PENDING",
             "required": True,
@@ -67,6 +68,7 @@ def test_travel_workflow_passes_all_results_to_summary():
     user.id = 1
 
     engine = WorkflowEngine(db, user)
+    engine._select_step_provider = lambda *_args, **_kwargs: (None, None)
     workflow = make_workflow()
 
     hotel = {
@@ -194,6 +196,7 @@ def test_summary_waits_for_all_discovery_steps():
     workflow = make_workflow()
 
     engine = WorkflowEngine(db, user)
+    engine._select_step_provider = lambda *_args, **_kwargs: (None, None)
 
     # Simulate discovery steps already completed or failed.
     workflow.steps_json[0]["status"] = "COMPLETED"
