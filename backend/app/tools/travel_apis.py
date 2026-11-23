@@ -9,7 +9,7 @@ import re
 import math
 
 from urllib.parse import quote_plus, quote, urlparse
-from typing import Optional
+from typing import Literal, Optional
 
 from app.integrations.serpapi.client import SerpApiError, serpapi_client
 from datetime import datetime
@@ -1494,13 +1494,24 @@ class GeoapifyPlacesTool(BaseTool):
 class CabInput(BaseModel):
     pickup_location: str = Field(
         ...,
+        min_length=2,
+        max_length=240,
         description="The pickup location explicitly supplied or confirmed by the user.",
     )
-
     dropoff_location: str = Field(
         ...,
+        min_length=2,
+        max_length=240,
         description="The drop-off location explicitly supplied or confirmed by the user.",
     )
+    pickup_at: Optional[str] = Field(
+        default=None,
+        max_length=64,
+        description="Requested local pickup time in ISO format, or 'now'. Provider handoff may require manual scheduling.",
+    )
+    passengers: int = Field(default=1, ge=1, le=8)
+    vehicle_preference: Literal["any", "mini", "sedan", "suv", "premium"] = "any"
+    luggage_count: int = Field(default=0, ge=0, le=8)
 
 
 
@@ -1508,9 +1519,10 @@ class CabDeepLinkTool(BaseTool):
     name = "get_cab_links"
 
     description = (
-        "Generate Uber/Ola ride handoff links for the user to "
-        "review and book in the provider app. "
-        "Does not request a ride or process payment."
+        "Prepare Uber/Ola ride handoff links from explicitly supplied pickup "
+        "and drop-off locations, preserving requested schedule, passenger, "
+        "vehicle and luggage preferences. This is not a live fare search and "
+        "does not request a ride or process payment."
     )
 
     input_schema = CabInput
@@ -1574,10 +1586,30 @@ class CabDeepLinkTool(BaseTool):
                 "type": "transport_links",
                 "origin": params.pickup_location,
                 "destination": params.dropoff_location,
+                "pickup_at": params.pickup_at,
+                "passengers": params.passengers,
+                "vehicle_preference": params.vehicle_preference,
+                "luggage_count": params.luggage_count,
                 "links": {
                     "uber": uber,
                     "ola": ola,
                 },
+                "live_quote": False,
+                "booking_created": False,
+                "payment_processed": False,
+                "handoff_fields": ["pickup_location", "dropoff_location"],
+                "manual_review_fields": [
+                    "pickup_at",
+                    "passengers",
+                    "vehicle_preference",
+                    "luggage_count",
+                ],
+                "disclaimer": (
+                    "These links prefill pickup and drop-off only. Confirm "
+                    "live availability, fare, pickup time, passenger count "
+                    "and vehicle preference inside the provider app. "
+                    "No ride has been booked and no payment has been made."
+                ),
             },
         )
 
@@ -1609,13 +1641,28 @@ class CabDeepLinkTool(BaseTool):
                 "type": "transport_links",
                 "origin": params.pickup_location,
                 "destination": params.dropoff_location,
+                "pickup_at": params.pickup_at,
+                "passengers": params.passengers,
+                "vehicle_preference": params.vehicle_preference,
+                "luggage_count": params.luggage_count,
                 "provider_id": provider_id,
                 "links": {
                     provider_id: url,
                 },
+                "live_quote": False,
+                "booking_created": False,
+                "payment_processed": False,
+                "handoff_fields": ["pickup_location", "dropoff_location"],
+                "manual_review_fields": [
+                    "pickup_at",
+                    "passengers",
+                    "vehicle_preference",
+                    "luggage_count",
+                ],
                 "disclaimer": (
-                    "This link does not book a ride or process payment. "
-                    "Review and confirm the ride in the provider app."
+                    "This link pre-fills pickup and drop-off only. Confirm "
+                    "availability, fare, schedule and vehicle details in the "
+                    "provider app. It does not create a booking or payment."
                 ),
             },
         )
