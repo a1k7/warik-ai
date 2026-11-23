@@ -265,7 +265,7 @@ export function CabWorkspace() {
               <label><span><Luggage size={14} /> LUGGAGE</span><select value={luggage} onChange={(event) => setLuggage(Number(event.target.value))}>{[0, 1, 2, 3, 4, 5, 6, 7, 8].map((count) => <option value={count} key={count}>{count} {count === 1 ? 'bag' : 'bags'}</option>)}</select></label>
             </div>
             {formError && <p className="cab-inline-error"><XCircle size={15} /> {formError}</p>}
-            <button className="cab-search-button" type="submit" disabled={busy}>{busy ? 'Preparing your ride…' : 'Find ride options'} <ArrowRight size={17} /></button>
+            <button className="cab-search-button" type="submit" disabled={busy}>{busy ? 'Preparing your ride…' : 'Prepare provider options'} <ArrowRight size={17} /></button>
             <p className="cab-form-footnote"><ShieldCheck size={13} /> Searching never books a ride or charges you.</p>
           </form>
         </section>
