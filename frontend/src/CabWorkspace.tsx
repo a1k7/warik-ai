@@ -31,6 +31,11 @@ const providerHosts: Record<string, string[]> = {
   uber: ['m.uber.com', 'uber.com'],
   ola: ['book.olacabs.com', 'olacabs.com'],
 };
+
+function toLocalDateTimeInput(date: Date): string {
+  const local = new Date(date.getTime() - date.getTimezoneOffset() * 60000);
+  return local.toISOString().slice(0, 16);
+}
 function safeProviderUrl(provider: string, value: string): string | null {
   try {
     const parsed = new URL(value);
@@ -250,7 +255,7 @@ export function CabWorkspace() {
                 <button type="button" className={scheduleMode === 'later' ? 'selected' : ''} onClick={() => setScheduleMode('later')}>Schedule</button>
               </div>
               {scheduleMode === 'later' && (
-                <label className="cab-scheduled-field"><span>Pickup date & time</span><input type="datetime-local" value={pickupAt} onChange={(event) => setPickupAt(event.target.value)} min={new Date(Date.now() + 60000).toISOString().slice(0, 16)} /></label>
+                <label className="cab-scheduled-field"><span>Pickup date & time</span><input type="datetime-local" value={pickupAt} onChange={(event) => setPickupAt(event.target.value)} min={toLocalDateTimeInput(new Date(Date.now() + 60000))} /></label>
               )}
             </div>
 
