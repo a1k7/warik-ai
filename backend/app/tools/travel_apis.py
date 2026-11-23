@@ -1579,8 +1579,10 @@ class CabDeepLinkTool(BaseTool):
         return ToolResult(
             success=True,
             message=(
-                f"Book a ride from {params.pickup_location} "
-                f"to {params.dropoff_location}."
+                f"Prepared Uber and Ola ride handoff links from "
+                f"{params.pickup_location} to {params.dropoff_location}. "
+                "Open a provider to check live availability and fare; "
+                "no ride has been booked."
             ),
             data={
                 "type": "transport_links",
@@ -1632,10 +1634,10 @@ class CabDeepLinkTool(BaseTool):
         return ToolResult(
             success=True,
             message=(
-                f"Generated a {provider_id.capitalize()} ride handoff "
-                f"link from {params.pickup_location} "
-                f"to {params.dropoff_location}. "
-                "Review and confirm the ride in the provider app."
+                f"Prepared a {provider_id.capitalize()} ride handoff "
+                f"from {params.pickup_location} to {params.dropoff_location}. "
+                "Review live availability, fare and ride details in the "
+                "provider app; this is not a booking."
             ),
             data={
                 "type": "transport_links",
