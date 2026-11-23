@@ -113,3 +113,8 @@ def test_cab_handoff_is_not_a_confirmed_booking_or_quote():
     assert result.data["booking_created"] is False
     assert result.data["payment_processed"] is False
     assert set(result.data["links"]) == {"uber", "ola"}
+
+
+def test_deterministic_cab_parser_does_not_guess_missing_locations():
+    assert parse("Book me a cab") is None
+    assert parse("Get me an Uber from the airport") is None
