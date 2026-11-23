@@ -6,18 +6,7 @@ import {
   Navigate,
 } from 'react-router-dom';
 
-import { Home } from './Home';
-import { Chat } from './Chat';
-import { Vision } from './pages/Vision';
-import { Saved } from './pages/Saved';
-import { Settings } from './pages/Settings';
-import { Tasks } from './pages/Tasks';
-import { Reminders } from './pages/Reminders';
-import { Expenses } from './pages/Expenses';
-import { Travel } from './pages/Travel';
-import { Food } from './pages/Food';
-import { BrowserAgent, AgentDashboard, AgentTaskDetail } from './pages/BrowserAgent';
-
+import { CabWorkspace } from './CabWorkspace';
 import { AppShell } from './components/AppShell';
 import { login, register } from './api';
 
@@ -49,7 +38,7 @@ function LoginScreen({ onLogin }: { onLogin: () => void }) {
       <div className="login-card">
         <div className="login-mark">✦</div>
         <h1 className="login-brand">warik<span>.ai</span></h1>
-        <p className="login-subtitle">Your personal execution assistant.</p>
+        <p className="login-subtitle">Your cab-first ride assistant.</p>
         <form onSubmit={submit} className="login-form">
           {mode === 'register' && <label>Name<input required value={name} onChange={(e) => setName(e.target.value)} autoComplete="name"/></label>}
           <label>Email<input required type="email" value={email} onChange={(e) => setEmail(e.target.value)} autoComplete="email"/></label>
@@ -72,20 +61,9 @@ function App() {
       {!loggedIn ? <LoginScreen onLogin={() => setLoggedIn(true)}/> : (
         <Routes>
           <Route element={<AppShell/>}>
-            <Route index element={<Home/>}/>
-            <Route path="/chat" element={<Chat/>}/>
-            <Route path="/vision" element={<Vision/>}/>
-            <Route path="/tasks" element={<Tasks/>}/>
-            <Route path="/reminders" element={<Reminders/>}/>
-            <Route path="/expenses" element={<Expenses/>}/>
-            <Route path="/travel" element={<Travel/>}/>
-            <Route path="/food" element={<Food/>}/>
-            <Route path="/saved" element={<Saved/>}/>
-            <Route path="/settings" element={<Settings/>}/>
+            <Route index element={<CabWorkspace/>}/>
+            <Route path="/cabs" element={<CabWorkspace/>}/>
           </Route>
-          <Route path="/agent" element={<BrowserAgent/>}/>
-          <Route path="/dashboard" element={<AgentDashboard/>}/>
-          <Route path="/tasks/:id" element={<AgentTaskDetail/>}/>
           <Route path="*" element={<Navigate to="/" replace/>}/>
         </Routes>
       )}

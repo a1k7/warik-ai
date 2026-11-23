@@ -75,9 +75,12 @@ TRAVEL RULES:
     the value. The deterministic travel normalizer will ask the user to clarify.
     Use the known single-city trip destination as the flight destination when
     it is unambiguous; do not guess an endpoint for a multi-stop itinerary.
-9. For cab links, use get_cab_links with:
+9. For cab handoff links, use get_cab_links with:
    - pickup_location
    - dropoff_location
+   - optional pickup_at, passengers, vehicle_preference, luggage_count
+   Preserve every supplied cab constraint. Provider links only prefill pickup and
+   drop-off; never claim a live fare, ETA, confirmed booking or payment.
 10. Supplementary flight and cab steps must be optional.
 11. Supplementary discovery steps must not depend on one another.
 12. The itinerary is required.
