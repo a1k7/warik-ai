@@ -398,9 +398,37 @@ def _try_parse_flight(text: str, ref: datetime) -> Optional[dict]:
     return {"intent": "search_flights_real", "params": {"origin": match.group(1).strip(), "destination": match.group(2).strip(), "date": parsed_date}}
 
 def _try_parse_cab(text: str) -> Optional[dict]:
-    match = re.search(r"(?:cab|taxi|auto|ola|uber).*?from\s+(.+?)\s+to\s+(.+)", text, re.IGNORECASE)
-    if not match: return None
-    return {"intent": "get_cab_links", "params": {"pickup_location": match.group(1).strip(), "dropoff_location": match.group(2).strip()}}
+    # The cab form uses pipe-delimited metadata so preferences never become
+    # part of the drop-off address.
+    route_text, *metadata = text.split("|")
+    match = re.search(
+        r"(?:cab|taxi|auto|ola|uber).*?from\\s+(.+?)\\s+to\\s+(.+?)\\s*$",
+        route_text.strip(),
+        re.IGNORECASE,
+    )
+    if not match:
+        return None
+
+    params = {
+        "pickup_location": match.group(1).strip(),
+        "dropoff_location": match.group(2).strip(),
+    }
+    converters = {
+        "pickup_at": lambda value: value[:64],
+        "passengers": int,
+        "vehicle_preference": lambda value: value.lower(),
+        "luggage_count": int,
+    }
+    for item in metadata:
+        key, separator, value = item.strip().partition("=")
+        if not separator or key not in converters:
+            continue
+        try:
+            params[key] = converters[key](value.strip())
+        except (TypeError, ValueError):
+            continue
+
+    return {"intent": "get_cab_links", "params": params}
 
 def parse(text: str, ref: Optional[datetime] = None) -> Optional[dict]:
     if not text or not text.strip(): return None
