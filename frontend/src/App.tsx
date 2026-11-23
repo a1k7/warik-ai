@@ -38,7 +38,7 @@ function LoginScreen({ onLogin }: { onLogin: () => void }) {
       <div className="login-card">
         <div className="login-mark">✦</div>
         <h1 className="login-brand">warik<span>.ai</span></h1>
-        <p className="login-subtitle">Your personal execution assistant.</p>
+        <p className="login-subtitle">Your cab-first ride assistant.</p>
         <form onSubmit={submit} className="login-form">
           {mode === 'register' && <label>Name<input required value={name} onChange={(e) => setName(e.target.value)} autoComplete="name"/></label>}
           <label>Email<input required type="email" value={email} onChange={(e) => setEmail(e.target.value)} autoComplete="email"/></label>
