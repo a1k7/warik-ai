@@ -71,6 +71,15 @@ function ProviderOptions({ data }: { data: CabStructuredData }) {
           </article>
         ))}
       </div>
+      <div className="cab-preference-summary">
+        <span>REQUESTED · VERIFY IN APP</span>
+        <div>
+          <b>{data.pickup_at === 'now' ? 'As soon as possible' : data.pickup_at ? 'Scheduled · ' + data.pickup_at.replace('T', ' ') : 'Pickup time to confirm'}</b>
+          <b>{data.passengers || 1} {(data.passengers || 1) === 1 ? 'passenger' : 'passengers'}</b>
+          <b>{(data.vehicle_preference || 'any') === 'any' ? 'Any vehicle' : (data.vehicle_preference || '').toUpperCase()}</b>
+          <b>{data.luggage_count || 0} {(data.luggage_count || 0) === 1 ? 'bag' : 'bags'}</b>
+        </div>
+      </div>
       <div className="cab-provider-disclaimer"><ShieldCheck size={15} /><p>{data.disclaimer || 'The handoff pre-fills your route. Check the final fare, vehicle, pickup time and availability in the provider app. No ride has been booked and no payment has been made.'}</p></div>
     </section>
   );
@@ -128,9 +137,13 @@ export function CabWorkspace() {
     setError('');
     setBusy(true);
     const temporaryId = Date.now();
-    setMessages((current) => [...current, { id: temporaryId, role: 'user', content: text }]);
+    let userMessageAdded = false;
     try {
+      // Restore/create the conversation before optimistic rendering so the
+      // restored history cannot overwrite the outgoing message.
       const conversationId = await ensureConversation();
+      setMessages((current) => [...current, { id: temporaryId, role: 'user', content: text }]);
+      userMessageAdded = true;
       const response = await sendMessageInConversation(conversationId, text);
       const assistantMessage: CabMessage = {
         id: Date.now() + 1,
@@ -147,7 +160,9 @@ export function CabWorkspace() {
       }
     } catch (err: any) {
       setError(err?.response?.data?.detail || 'Warik could not reach the cab service. Check that the backend is running and try again.');
-      setMessages((current) => current.filter((message) => message.id !== temporaryId));
+      if (userMessageAdded) {
+        setMessages((current) => current.filter((message) => message.id !== temporaryId));
+      }
     } finally {
       setBusy(false);
     }
