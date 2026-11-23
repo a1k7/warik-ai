@@ -402,7 +402,7 @@ def _try_parse_cab(text: str) -> Optional[dict]:
     # part of the drop-off address.
     route_text, *metadata = text.split("|")
     match = re.search(
-        r"(?:cab|taxi|auto|ola|uber).*?from\\s+(.+?)\\s+to\\s+(.+?)\\s*$",
+        r"(?:cab|taxi|auto|ola|uber).*?from\s+(.+?)\s+to\s+(.+?)\s*$",
         route_text.strip(),
         re.IGNORECASE,
     )
